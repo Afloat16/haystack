@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -674,6 +675,103 @@ def test_document_matches_filter_strict_datetime_comparison_in_nested_condition(
 
     assert not document_matches_filter(
         filters, Document(meta={"date": "2025-02-03T12:45:46"}), strict_datetime_comparison=True
+    )
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    "operator,forward_result,reverse_result",
+    [
+        ("==", False, False),
+        ("!=", True, True),
+        ("<", True, False),
+        ("<=", True, False),
+        (">", False, True),
+        (">=", False, True),
+        ("in", False, False),
+        ("not in", True, True),
+    ],
+)
+def test_datetime_filter_distinguishes_dst_folds(
+    operator: str, forward_result: bool, reverse_result: bool, reverse: bool, strict: bool
+) -> None:
+    first = datetime(2025, 11, 2, 1, 30, tzinfo=ZoneInfo("America/New_York"), fold=0)
+    second = first.replace(fold=1)
+    assert second.timestamp() - first.timestamp() == 3600
+    document_value, filter_value = (second, first) if reverse else (first, second)
+    filters = {
+        "field": "meta.date",
+        "operator": operator,
+        "value": [filter_value] if operator in {"in", "not in"} else filter_value,
+    }
+
+    result = document_matches_filter(
+        filters=filters, document=Document(meta={"date": document_value}), strict_datetime_comparison=strict
+    )
+
+    assert result is (reverse_result if reverse else forward_result)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("fold", [0, 1])
+def test_datetime_filter_matches_dst_fold_to_same_utc_instant(fold: int, strict: bool) -> None:
+    date = datetime(2025, 11, 2, 1, 30, tzinfo=ZoneInfo("America/New_York"), fold=fold)
+    filters = {"field": "meta.date", "operator": "==", "value": date.astimezone(UTC)}
+
+    assert document_matches_filter(
+        filters=filters, document=Document(meta={"date": date}), strict_datetime_comparison=strict
+    )
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize(
+    "first,second",
+    [
+        (datetime(2025, 11, 2, 1, 30), datetime(2025, 11, 2, 2, 30)),
+        (datetime.fromisoformat("2025-11-02T01:30:00-04:00"), datetime.fromisoformat("2025-11-02T01:30:00-05:00")),
+    ],
+)
+def test_datetime_filter_preserves_naive_and_fixed_offset_order(
+    first: datetime, second: datetime, strict: bool
+) -> None:
+    document = Document(meta={"date": first})
+    assert document_matches_filter(
+        filters={"field": "meta.date", "operator": "<", "value": second},
+        document=document,
+        strict_datetime_comparison=strict,
+    )
+    assert not document_matches_filter(
+        filters={"field": "meta.date", "operator": "==", "value": second},
+        document=document,
+        strict_datetime_comparison=strict,
+    )
+    assert document_matches_filter(
+        filters={"field": "meta.date", "operator": "==", "value": first},
+        document=document,
+        strict_datetime_comparison=strict,
+    )
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize(
+    "date",
+    [
+        datetime(1, 1, 1, microsecond=1, tzinfo=timezone(timedelta(hours=1))),
+        datetime(9999, 12, 31, 23, 59, 59, 999998, tzinfo=timezone(timedelta(hours=-1))),
+    ],
+)
+def test_datetime_filter_preserves_range_boundaries(date: datetime, strict: bool) -> None:
+    document = Document(meta={"date": date})
+    assert document_matches_filter(
+        filters={"field": "meta.date", "operator": "==", "value": date},
+        document=document,
+        strict_datetime_comparison=strict,
+    )
+    assert document_matches_filter(
+        filters={"field": "meta.date", "operator": "<", "value": date + timedelta(microseconds=1)},
+        document=document,
+        strict_datetime_comparison=strict,
     )
 
 

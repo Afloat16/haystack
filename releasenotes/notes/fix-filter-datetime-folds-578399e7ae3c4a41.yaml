@@ -1,0 +1,5 @@
+---
+fixes:
+  - |
+    Datetime filters now compare timezone-aware values by their actual instant. The two occurrences of the same local
+    time during a daylight-saving fall-back no longer compare as equal, and ordering respects their UTC offsets.

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import fields
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import dateutil.parser
@@ -58,6 +58,8 @@ LOGICAL_OPERATORS = {"NOT": _not, "OR": _or, "AND": _and}
 
 
 def _equal(value: Any, filter_value: Any, strict_datetime_comparison: bool) -> bool:
+    if isinstance(value, datetime) and isinstance(filter_value, datetime):
+        return _dates_are_equal(value=value, filter_value=filter_value, strict=strict_datetime_comparison)
     if value == filter_value:
         return True
     return _dates_are_equal(value=value, filter_value=filter_value, strict=strict_datetime_comparison)
@@ -185,20 +187,23 @@ def _parse_date(value: str) -> datetime:
 
 
 def _ensure_both_dates_naive_or_aware(date1: datetime, date2: datetime) -> tuple[datetime, datetime]:
-    """Ensure that both dates are either naive or aware."""
+    """Ensure that both dates are naive or use fixed UTC offsets for instant comparisons."""
     # Both naive
     if date1.tzinfo is None and date2.tzinfo is None:
-        return date1, date2
-
-    # Both aware
-    if date1.tzinfo is not None and date2.tzinfo is not None:
         return date1, date2
 
     # One naive, one aware
     if date1.tzinfo is None:
         date1 = date1.replace(tzinfo=date2.tzinfo)
-    else:
+    elif date2.tzinfo is None:
         date2 = date2.replace(tzinfo=date1.tzinfo)
+    # Comparing datetimes with the same tzinfo otherwise ignores fold during DST transitions.
+    # Keep the wall-clock values so dates near datetime.min/max do not overflow when shifted to UTC.
+    offset1, offset2 = date1.utcoffset(), date2.utcoffset()
+    if offset1 is not None:
+        date1 = date1.replace(tzinfo=timezone(offset1))
+    if offset2 is not None:
+        date2 = date2.replace(tzinfo=timezone(offset2))
     return date1, date2
 
 
