@@ -504,6 +504,35 @@ class TestMemoryDocumentStore(
         assert all(score is not None and not math.isnan(score) for score in scores.values())
         assert scores["zero"] == 0.0
 
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("scale_score", [False, True])
+    async def test_cosine_retrieval_accepts_integer_document_embeddings(
+        self, cosine_document_store: InMemoryDocumentStore, asynchronous: bool, scale_score: bool
+    ) -> None:
+        documents = [
+            Document(id="aligned", embedding=[3, 4]),
+            Document(id="opposite", embedding=[-3, -4]),
+            Document(id="zero", embedding=[0, 0]),
+        ]
+        if asynchronous:
+            await cosine_document_store.write_documents_async(documents=documents)
+            results = await cosine_document_store.embedding_retrieval_async(
+                query_embedding=[3.0, 4.0], scale_score=scale_score, return_embedding=True
+            )
+        else:
+            cosine_document_store.write_documents(documents=documents)
+            results = cosine_document_store.embedding_retrieval(
+                query_embedding=[3.0, 4.0], scale_score=scale_score, return_embedding=True
+            )
+
+        expected = {"aligned": 1.0, "zero": 0.5 if scale_score else 0.0, "opposite": 0.0 if scale_score else -1.0}
+        assert {doc.id: doc.score for doc in results} == pytest.approx(expected)
+        assert [doc.id for doc in results] == ["aligned", "zero", "opposite"]
+        assert {doc.id: doc.embedding for doc in results} == {doc.id: doc.embedding for doc in documents}
+        assert {doc.id: doc.embedding for doc in cosine_document_store.filter_documents()} == {
+            doc.id: doc.embedding for doc in documents
+        }
+
     def test_embedding_retrieval_invalid_query(self, in_memory_doc_store):
         with pytest.raises(ValueError, match="query_embedding should be a non-empty list of floats"):
             in_memory_doc_store.embedding_retrieval(query_embedding=[])

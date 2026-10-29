@@ -939,7 +939,7 @@ class InMemoryDocumentStore:
             query_norm = np.linalg.norm(x=query_embedding, axis=1, keepdims=True)
             document_norms = np.linalg.norm(x=document_embeddings, axis=1, keepdims=True)
             query_embedding /= np.where(query_norm == 0.0, 1.0, query_norm)
-            document_embeddings /= np.where(document_norms == 0.0, 1.0, document_norms)
+            document_embeddings = document_embeddings / np.where(document_norms == 0.0, 1.0, document_norms)
 
         try:
             scores = np.dot(a=query_embedding, b=document_embeddings.T)[0].tolist()

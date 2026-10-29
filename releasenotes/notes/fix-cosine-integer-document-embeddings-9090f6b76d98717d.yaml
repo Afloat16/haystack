@@ -1,0 +1,5 @@
+---
+fixes:
+  - |
+    ``InMemoryDocumentStore`` now accepts integer-valued document embeddings when using cosine similarity instead of
+    raising a NumPy casting error during normalization.
