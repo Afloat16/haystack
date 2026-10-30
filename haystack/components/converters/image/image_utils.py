@@ -172,7 +172,8 @@ def _convert_pdf_to_images(
 
             # Get dimensions of the page
             page = pdf[max(page_number - 1, 0)]  # Adjust for 0-based indexing
-            _, _, width, height = page.get_mediabox()
+            # Use the rendered dimensions, which account for nonzero page origins and cropping.
+            width, height = page.get_size()
 
             target_resolution_dpi = 300.0
 

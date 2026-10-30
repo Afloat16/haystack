@@ -2,9 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
+from pypdf import PdfWriter
+from pypdf.generic import RectangleObject
 
 from haystack.components.converters.image.image_utils import _convert_pdf_to_images
 from haystack.components.converters.image.pdf_to_image import PDFToImageContent
@@ -13,6 +18,49 @@ from haystack.dataclasses import ByteStream
 
 
 class TestPDFToImageContent:
+    @pytest.mark.parametrize(
+        "media_box,crop_box",
+        [
+            ((10000, 10000, 10072, 10144), None),
+            ((-10072, -10144, -10000, -10000), None),
+            ((0, 0, 10000, 10000), (1000, 2000, 1072, 2144)),
+        ],
+        ids=["positive-origin", "negative-origin", "cropped-page"],
+    )
+    def test_run_preserves_resolution_for_offset_or_cropped_pages(
+        self, media_box: tuple[int, int, int, int], crop_box: tuple[int, int, int, int] | None
+    ) -> None:
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=72, height=144)
+        page.mediabox = RectangleObject(media_box)
+        if crop_box is not None:
+            page.cropbox = RectangleObject(crop_box)
+        stream = BytesIO()
+        writer.write(stream)
+
+        result = PDFToImageContent().run(sources=[ByteStream(data=stream.getvalue(), mime_type="application/pdf")])
+
+        assert len(result["image_contents"]) == 1
+        image_content = result["image_contents"][0]
+        with Image.open(BytesIO(base64.b64decode(image_content.base64_image))) as image:
+            # A 72-by-144-point visible page is one by two inches, rendered at 300 DPI.
+            assert image.size == (300, 600)
+
+    def test_run_limits_pixels_for_page_ending_at_origin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=72, height=72)
+        page.mediabox = RectangleObject((-72, -72, 0, 0))
+        stream = BytesIO()
+        writer.write(stream)
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr(Image, "MAX_IMAGE_PIXELS", 10000)
+            result = PDFToImageContent().run(sources=[ByteStream(data=stream.getvalue(), mime_type="application/pdf")])
+
+        assert len(result["image_contents"]) == 1
+        with Image.open(BytesIO(base64.b64decode(result["image_contents"][0].base64_image))) as image:
+            assert image.width * image.height <= 10000
+
     def test_to_dict(self) -> None:
         converter = PDFToImageContent()
         assert component_to_dict(converter, "converter") == {

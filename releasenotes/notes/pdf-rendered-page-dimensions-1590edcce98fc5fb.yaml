@@ -1,0 +1,7 @@
+---
+fixes:
+  - |
+    ``PDFToImageContent`` and PDF pages converted by ``DocumentToImageContent``
+    now use visible page dimensions to choose their rendering resolution. This
+    prevents unnecessary quality loss and restores size-based downscaling for
+    pages with nonzero origins or crop boxes.

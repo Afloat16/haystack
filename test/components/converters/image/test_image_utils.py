@@ -88,7 +88,7 @@ class TestConvertPdfToImages:
         mock_pdf_document = MagicMock()
         mock_pdf_document.__len__.return_value = 1
         mock_page = MagicMock()
-        mock_page.get_mediabox.return_value = (0, 0, 1e6, 1e6)
+        mock_page.get_size.return_value = (1e6, 1e6)
         mock_pdf_document.__getitem__.return_value = mock_page
 
         with patch("haystack.components.converters.image.image_utils.PdfDocument", return_value=mock_pdf_document):
@@ -102,7 +102,7 @@ class TestConvertPdfToImages:
         mock_pdf_document = MagicMock()
         mock_pdf_document.__len__.return_value = 1
         mock_page = MagicMock()
-        mock_page.get_mediabox.return_value = (0, 0, 100, 100)
+        mock_page.get_size.return_value = (100, 100)
         mock_page.render.side_effect = RuntimeError("render failed")
         mock_pdf_document.__getitem__.return_value = mock_page
 
