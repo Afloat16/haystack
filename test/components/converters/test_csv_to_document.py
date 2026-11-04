@@ -272,6 +272,56 @@ class TestCSVToDocument:
         assert docs[0].content == "Name,Age\r\nJohn Doe,27\r\n"
         assert not docs[0].content.startswith("﻿")
 
+    @pytest.mark.parametrize("content_column", ["text", "extra_columns"])
+    def test_row_mode_preserves_columns_that_collide_with_overflow_key(self, content_column: str) -> None:
+        source = ByteStream(data=b"text,extra_columns,extra_columns_1\nhello,original,also-original,overflow\n")
+        converter = CSVToDocument(conversion_mode="row")
+
+        documents = converter.run(sources=[source], content_column=content_column)["documents"]
+
+        assert len(documents) == 1
+        cells = {"text": "hello", "extra_columns": "original", "extra_columns_1": "also-original"}
+        assert documents[0].content == cells.pop(content_column)
+        assert documents[0].meta == {**cells, "row_number": 0, "extra_columns_2": "['overflow']"}
+
+    @pytest.mark.parametrize("header", ["text,text,author", "text,author,author"])
+    def test_row_mode_rejects_duplicate_header_columns(self, header: str) -> None:
+        source = ByteStream(data=f"{header}\nfirst,second,third\n".encode())
+        converter = CSVToDocument(conversion_mode="row")
+
+        with pytest.raises(ValueError, match="duplicate columns in header"):
+            converter.run(sources=[source], content_column="text")
+
+    @pytest.mark.parametrize("data", [b'"text,author\n', b'"text"invalid,author\n'])
+    def test_row_mode_reports_malformed_header(self, data: bytes, tmp_path: Path) -> None:
+        source = tmp_path / "bad-header.csv"
+        source.write_bytes(data)
+        converter = CSVToDocument(conversion_mode="row")
+
+        with pytest.raises(RuntimeError, match="could not parse CSV header.*bad-header.csv"):
+            converter.run(sources=[source], content_column="text")
+
+    @pytest.mark.parametrize("record,line_number", [('"unclosed,Ada\nnext,Bob\n', 4), ('"closed"invalid,Ada\n', 3)])
+    def test_row_mode_reports_malformed_record(self, record: str, line_number: int, tmp_path: Path) -> None:
+        source = tmp_path / "bad-record.csv"
+        source.write_text(f"text,author\nvalid,Ada\n{record}", encoding="utf-8")
+        converter = CSVToDocument(conversion_mode="row")
+
+        with pytest.raises(RuntimeError, match=f"could not parse CSV record at line {line_number}.*bad-record.csv"):
+            converter.run(sources=[source], content_column="text")
+
+    def test_row_mode_preserves_valid_quoted_multiline_records(self) -> None:
+        source = ByteStream(data=b'text,author\n"first line\nsecond, ""quoted"" line",Ada\nnext,Bob\n')
+        converter = CSVToDocument(conversion_mode="row")
+
+        documents = converter.run(sources=[source], content_column="text")["documents"]
+
+        assert [document.content for document in documents] == ['first line\nsecond, "quoted" line', "next"]
+        assert [document.meta for document in documents] == [
+            {"author": "Ada", "row_number": 0},
+            {"author": "Bob", "row_number": 1},
+        ]
+
     def test_run_utf8_without_bom_is_unchanged(self, tmp_path):
         """Reading a plain UTF-8 CSV must keep working, including non-ASCII content."""
         path = tmp_path / "plain.csv"

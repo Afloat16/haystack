@@ -5,6 +5,7 @@
 import csv
 import io
 import os
+from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
@@ -168,28 +169,50 @@ class CSVToDocument:
                 # header, e.g. an unquoted comma inside a value) land under an explicit string key
                 # instead of the default ``None`` key, which would break ``Document`` id generation.
                 reader = csv.DictReader(
-                    io.StringIO(data), delimiter=self.delimiter, quotechar=self.quotechar, restkey="extra_columns"
+                    io.StringIO(data),
+                    delimiter=self.delimiter,
+                    quotechar=self.quotechar,
+                    restkey="extra_columns",
+                    strict=True,
                 )
             except Exception as e:
                 raise RuntimeError(f"CSVToDocument(row): could not parse CSV rows for {source}: {e}") from e
 
             # Validate header contains content_column; strict error if missing
-            header = reader.fieldnames or []
+            try:
+                header = reader.fieldnames or []
+            except csv.Error as e:
+                raise RuntimeError(f"CSVToDocument(row): could not parse CSV header for {source}: {e}") from e
+            duplicate_columns = [name for name, count in Counter(header).items() if count > 1]
+            if duplicate_columns:
+                raise ValueError(f"CSVToDocument(row): duplicate columns in header for {source}: {duplicate_columns}")
             if content_column not in header:
                 raise ValueError(
                     f"CSVToDocument(row): content_column='{content_column}' not found in header "
                     f"for {source}. Available columns: {header}"
                 )
 
+            # A real column may already be named ``extra_columns`` (including the content column).
+            # Choose a free overflow key before DictReader can overwrite that column's cell.
+            suffix = 1
+            while reader.restkey in header:
+                reader.restkey = f"extra_columns_{suffix}"
+                suffix += 1
+
             # Build documents; if a row processing fails, raise immediately (no skip)
-            for i, row in enumerate(reader):
-                try:
-                    doc = self._build_document_from_row(
-                        row=row, base_meta=merged_metadata, row_index=i, content_column=content_column
-                    )
-                except Exception as e:
-                    raise RuntimeError(f"CSVToDocument(row): failed to process row {i} for {source}: {e}") from e
-                documents.append(doc)
+            try:
+                for i, row in enumerate(reader):
+                    try:
+                        doc = self._build_document_from_row(
+                            row=row, base_meta=merged_metadata, row_index=i, content_column=content_column
+                        )
+                    except Exception as e:
+                        raise RuntimeError(f"CSVToDocument(row): failed to process row {i} for {source}: {e}") from e
+                    documents.append(doc)
+            except csv.Error as e:
+                raise RuntimeError(
+                    f"CSVToDocument(row): could not parse CSV record at line {reader.reader.line_num} for {source}: {e}"
+                ) from e
 
         return {"documents": documents}
 

@@ -1,0 +1,13 @@
+---
+fixes:
+  - |
+    ``CSVToDocument`` in row mode preserves cells in columns named
+    ``extra_columns`` when a row contains surplus fields. Surplus values use the
+    first available ``extra_columns`` key with a numeric suffix when necessary.
+upgrade:
+  - |
+    ``CSVToDocument(conversion_mode="row")`` now rejects duplicate header names
+    with ``ValueError`` and malformed quoted records with ``RuntimeError`` instead
+    of silently overwriting cells or combining records. Rename duplicate columns
+    and correct malformed quoting before converting these files. Valid quoted
+    multiline cells and the default file conversion mode are unaffected.
