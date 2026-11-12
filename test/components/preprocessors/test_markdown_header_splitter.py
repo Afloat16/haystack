@@ -1151,6 +1151,30 @@ def test_page_number_of_split_starting_with_multi_character_page_break():
     assert [doc.meta["page_number"] for doc in docs] == [1, 2]
 
 
+@pytest.mark.parametrize("keep_headers", [True, False])
+def test_interleaved_code_fences_preserve_sections(keep_headers):
+    sections = [
+        f"# Section {idx}\nBody {idx}\n```python\n# Not a header\n```\n~~~\nvalue = 1\n~~~\n" for idx in range(50)
+    ]
+    source = Document(content="".join(sections), meta={"source": "manual"})
+    result = MarkdownHeaderSplitter(keep_headers=keep_headers).run(documents=[source])["documents"]
+
+    assert len(result) == len(sections)
+    for idx, (document, section) in enumerate(zip(result, sections, strict=True)):
+        expected_content = section if keep_headers else section[section.index("\n") :]
+        assert document.content == expected_content
+        assert document.meta == {
+            "source": "manual",
+            "source_id": source.id,
+            "page_number": 1,
+            "split_id": idx,
+            "header": f"Section {idx}",
+            "parent_headers": [],
+        }
+    if keep_headers:
+        assert "".join(document.content or "" for document in result) == source.content
+
+
 def test_page_break_in_removed_header_is_counted():
     text = "# H1<PAGE>\nw1 w2 w3 w4"
     splitter = MarkdownHeaderSplitter(

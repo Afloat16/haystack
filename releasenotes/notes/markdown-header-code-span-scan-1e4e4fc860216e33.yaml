@@ -1,0 +1,6 @@
+---
+enhancements:
+  - |
+    ``MarkdownHeaderSplitter`` now scans fenced code block boundaries once when
+    identifying headers. This reduces processing time for documents containing
+    many headers and code blocks while preserving split content and metadata.

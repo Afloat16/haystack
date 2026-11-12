@@ -154,12 +154,16 @@ class MarkdownHeaderSplitter:
 
         # find headers at the configured levels only, excluding any that fall inside a code block. Content between
         # skipped headers is absorbed into the preceding chunk's span since end = next_match.start().
-        matches = [
-            m
-            for m in re.finditer(self._header_pattern, text)
-            if len(m.group(1)) in self._header_split_levels_set
-            and not any(start <= m.start() < end for start, end in code_spans)
-        ]
+        matches = []
+        code_span_idx = 0
+        for match in self._header_pattern.finditer(text):
+            if len(match.group(1)) not in self._header_split_levels_set:
+                continue
+            # Both headers and code spans are ordered; each finished span only needs to be visited once.
+            while code_span_idx < len(code_spans) and code_spans[code_span_idx][1] <= match.start():
+                code_span_idx += 1
+            if code_span_idx == len(code_spans) or match.start() < code_spans[code_span_idx][0]:
+                matches.append(match)
 
         # return unsplit if no headers found
         if not matches:
