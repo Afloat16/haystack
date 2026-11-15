@@ -135,6 +135,7 @@ def _convert_streaming_chunks_to_chat_message(chunks: list[StreamingChunk]) -> C
 
     # Process tool calls if present in any chunk
     tool_call_data: dict[int, dict[str, str]] = {}  # Track tool calls by index
+    tool_call_extras: dict[int, dict[str, Any]] = {}
     for chunk in chunks:
         if chunk.tool_calls:
             for tool_call in chunk.tool_calls:
@@ -151,6 +152,9 @@ def _convert_streaming_chunks_to_chat_message(chunks: list[StreamingChunk]) -> C
                     tool_call_data[tool_call.index]["name"] += tool_call.tool_name
                 if tool_call.arguments is not None:
                     tool_call_data[tool_call.index]["arguments"] += tool_call.arguments
+                if tool_call.extra is not None:
+                    # Provider metadata may arrive separately; later values replace earlier values for the same key.
+                    tool_call_extras.setdefault(tool_call.index, {}).update(tool_call.extra)
 
     # Convert accumulated tool call data into ToolCall objects
     sorted_keys = sorted(tool_call_data.keys())
@@ -158,7 +162,14 @@ def _convert_streaming_chunks_to_chat_message(chunks: list[StreamingChunk]) -> C
         tool_call_dict = tool_call_data[key]
         try:
             arguments = json.loads(tool_call_dict.get("arguments", "{}")) if tool_call_dict.get("arguments") else {}
-            tool_calls.append(ToolCall(id=tool_call_dict["id"], tool_name=tool_call_dict["name"], arguments=arguments))
+            tool_calls.append(
+                ToolCall(
+                    id=tool_call_dict["id"],
+                    tool_name=tool_call_dict["name"],
+                    arguments=arguments,
+                    extra=tool_call_extras.get(key),
+                )
+            )
         except json.JSONDecodeError:
             logger.warning(
                 "The LLM provider returned a malformed JSON string for tool call arguments. This tool call "

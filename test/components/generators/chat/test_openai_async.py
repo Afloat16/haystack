@@ -25,7 +25,7 @@ from openai.types.chat.chat_completion_message_function_tool_call import Functio
 from openai.types.completion_usage import CompletionTokensDetails, CompletionUsage, PromptTokensDetails
 
 from haystack.components.generators.chat.openai import OpenAIChatGenerator
-from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall
+from haystack.dataclasses import ChatMessage, StreamingChunk, ToolCall, ToolCallDelta
 from haystack.tools import Tool
 from haystack.utils.auth import Secret
 
@@ -342,6 +342,29 @@ class TestOpenAIChatGeneratorAsync:
         assert [isinstance(reply, ChatMessage) for reply in response["replies"]]
         assert response["replies"][0].text is not None
         assert "Hello" in response["replies"][0].text  # see openai_mock_chat_completion_chunk
+
+    @pytest.mark.asyncio
+    async def test_run_preserves_extra_from_custom_streaming_chunk_conversion(
+        self, mock_chat_completion_chunk_with_tools: MagicMock
+    ) -> None:
+        chunk = StreamingChunk(
+            content="",
+            index=0,
+            tool_calls=[
+                ToolCallDelta(index=0, id="123", tool_name="weather", arguments="{}", extra={"call_id": "call_123"})
+            ],
+            finish_reason="tool_calls",
+        )
+        streaming_callback = AsyncMock()
+        generator = OpenAIChatGenerator(api_key=Secret.from_token("test-api-key"))
+
+        with patch.object(generator, "_convert_chat_completion_chunk_to_streaming_chunk", return_value=chunk):
+            response = await generator.run_async("What is the weather?", streaming_callback=streaming_callback)
+
+        streaming_callback.assert_awaited_once_with(chunk)
+        assert response["replies"][0].tool_calls == [
+            ToolCall(id="123", tool_name="weather", arguments={}, extra={"call_id": "call_123"})
+        ]
 
     @pytest.mark.asyncio
     async def test_run_with_tools_async(self, tools: list[Tool]) -> None:

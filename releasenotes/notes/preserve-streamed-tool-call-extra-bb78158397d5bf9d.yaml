@@ -1,0 +1,7 @@
+---
+fixes:
+  - |
+    Preserve provider-specific ``ToolCallDelta.extra`` in the final ``ToolCall.extra``
+    for integrations using shared streaming assembly, including custom
+    ``OpenAIChatGenerator`` chunk converters. Previously, this metadata was discarded
+    after streaming callbacks.

@@ -628,6 +628,28 @@ class TestOpenAIChatGenerator:
         assert response["replies"][0].text is not None
         assert "Hello" in response["replies"][0].text  # see openai_mock_chat_completion_chunk
 
+    def test_run_preserves_extra_from_custom_streaming_chunk_conversion(
+        self, mock_chat_completion_chunk_with_tools: MagicMock
+    ) -> None:
+        chunk = StreamingChunk(
+            content="",
+            index=0,
+            tool_calls=[
+                ToolCallDelta(index=0, id="123", tool_name="weather", arguments="{}", extra={"call_id": "call_123"})
+            ],
+            finish_reason="tool_calls",
+        )
+        received_chunks: list[StreamingChunk] = []
+        generator = OpenAIChatGenerator(api_key=Secret.from_token("test-api-key"))
+
+        with patch.object(generator, "_convert_chat_completion_chunk_to_streaming_chunk", return_value=chunk):
+            response = generator.run("What is the weather?", streaming_callback=received_chunks.append)
+
+        assert received_chunks == [chunk]
+        assert response["replies"][0].tool_calls == [
+            ToolCall(id="123", tool_name="weather", arguments={}, extra={"call_id": "call_123"})
+        ]
+
     def test_run_with_response_format(
         self, chat_messages: list[ChatMessage], mock_parsed_chat_completion: MagicMock
     ) -> None:

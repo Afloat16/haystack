@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
 from unittest.mock import call, patch
 
 import pytest
@@ -617,6 +618,78 @@ def test_convert_streaming_chunk_to_chat_message_with_empty_tool_call_arguments(
     assert message.tool_calls[0].arguments == {}
     assert message.tool_calls[0].id == "toolu_123"
     assert message.tool_calls[0].tool_name == "weather"
+
+
+@pytest.mark.parametrize(
+    ("extras", "expected_extra"),
+    [
+        ([None, None], None),
+        ([{}, None], {}),
+        ([None, {"call_id": "call_123"}], {"call_id": "call_123"}),
+        ([{"call_id": "call_123"}, None, {}], {"call_id": "call_123"}),
+        (
+            [{"call_id": "call_123", "status": "in_progress"}, {"status": "completed"}],
+            {"call_id": "call_123", "status": "completed"},
+        ),
+        ([{"status": "in_progress"}, {"status": None, "attempt": 0}], {"status": None, "attempt": 0}),
+        ([{"provider": {"old": True}}, {"provider": {"new": False}}], {"provider": {"new": False}}),
+    ],
+)
+def test_convert_streaming_chunks_preserves_tool_call_extra(
+    extras: list[dict[str, Any] | None], expected_extra: dict[str, Any] | None
+) -> None:
+    chunks = [
+        StreamingChunk(
+            content="", index=0, tool_calls=[ToolCallDelta(index=0, id="123", tool_name="weather", arguments="{}")]
+        )
+    ]
+    chunks.extend(
+        StreamingChunk(content="", index=0, tool_calls=[ToolCallDelta(index=0, extra=extra)]) for extra in extras
+    )
+    original_chunks = [chunk.to_dict() for chunk in chunks]
+
+    message = _convert_streaming_chunks_to_chat_message(chunks=chunks)
+
+    assert message.tool_calls == [ToolCall(id="123", tool_name="weather", arguments={}, extra=expected_extra)]
+    assert [chunk.to_dict() for chunk in chunks] == original_chunks
+    if message.tool_call is not None and message.tool_call.extra is not None:
+        assert all(message.tool_call.extra is not extra for extra in extras)
+
+
+def test_convert_streaming_chunks_keeps_interleaved_tool_call_extra_separate() -> None:
+    chunks = [
+        StreamingChunk(
+            content="",
+            index=1,
+            tool_calls=[
+                ToolCallDelta(index=1, id="second", tool_name="weather", arguments='{"city":'),
+                ToolCallDelta(index=0, id="first", tool_name="weather", extra={"call_id": "call_first"}),
+            ],
+        ),
+        StreamingChunk(
+            content="",
+            index=0,
+            tool_calls=[
+                ToolCallDelta(index=0, arguments='{"city": "Paris"}'),
+                ToolCallDelta(index=1, arguments='"Berlin"}', extra={"call_id": "call_second"}),
+            ],
+        ),
+        StreamingChunk(content="", index=0, tool_calls=[ToolCallDelta(index=0, extra={"status": "completed"})]),
+    ]
+    original_chunks = [chunk.to_dict() for chunk in chunks]
+
+    message = _convert_streaming_chunks_to_chat_message(chunks=chunks)
+
+    assert message.tool_calls == [
+        ToolCall(
+            id="first",
+            tool_name="weather",
+            arguments={"city": "Paris"},
+            extra={"call_id": "call_first", "status": "completed"},
+        ),
+        ToolCall(id="second", tool_name="weather", arguments={"city": "Berlin"}, extra={"call_id": "call_second"}),
+    ]
+    assert [chunk.to_dict() for chunk in chunks] == original_chunks
 
 
 def test_print_streaming_chunk_content_only():
