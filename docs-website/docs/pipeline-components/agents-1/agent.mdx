@@ -60,6 +60,8 @@ print(response["tool_call_counts"])  # {"calculator": 1}
 print(response["exit_reason"])  # "text"
 ```
 
+The `token_usage["total_tokens"]` output includes every reply's reported total. For replies that omit a total, the Agent adds their input and output token counts before accumulating usage. This keeps the total complete when a fallback generator switches between providers with different usage fields. Reported totals take precedence because they can include additional tokens, such as thinking tokens. The original usage metadata on each `ChatMessage` is unchanged. If a provider reports no usage, the Agent cannot include that call in the total.
+
 ### Exit reason
 
 The `exit_reason` output tells you why the agent stopped, which makes it easy to route the agent's output downstream — for example, with a [`ConditionalRouter`](../routers/conditionalrouter.mdx). It is one of:

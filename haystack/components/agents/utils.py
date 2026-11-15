@@ -51,6 +51,10 @@ def _record_llm_usage(state: State, llm_messages: list[ChatMessage]) -> None:
     """
     Aggregate token usage from the latest LLM messages into the State.
 
+    Fill in a missing total per reply before accumulating, so a run that switches between providers with different
+    usage schemas still has a complete total. A reported total takes precedence because it can include tokens absent
+    from the input/output counts, such as thinking tokens.
+
     Only writes when at least one message reports `meta["usage"]`, so generators that don't surface usage data
     leave `token_usage` at its default empty dict rather than overwriting it.
 
@@ -63,6 +67,11 @@ def _record_llm_usage(state: State, llm_messages: list[ChatMessage]) -> None:
     for msg in llm_messages:
         usage = msg.meta.get("usage")
         if isinstance(usage, dict):
+            total_tokens = usage.get("total_tokens")
+            if isinstance(total_tokens, bool) or not isinstance(total_tokens, (int, float)):
+                total_tokens = _context_tokens_from_usage(usage)
+                if total_tokens:
+                    usage = {**usage, "total_tokens": total_tokens}
             current = _accumulate_usage(current or {}, usage)
             updated = True
     if updated:

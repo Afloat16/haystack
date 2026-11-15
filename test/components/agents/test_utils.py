@@ -9,6 +9,7 @@ from haystack.components.agents.utils import (
     _accumulate_usage,
     _context_tokens_from_usage,
     _record_context_tokens,
+    _record_llm_usage,
     _render_prompt_messages,
     _select_tools_by_name,
     _template_for_role,
@@ -101,6 +102,59 @@ class TestAccumulateUsage:
     def test_none_does_not_erase_reported_values(self, reported, unreported, expected):
         assert _accumulate_usage(reported, unreported) == expected
         assert _accumulate_usage(unreported, reported) == expected
+
+
+class TestRecordLlmUsage:
+    @pytest.mark.parametrize(
+        "usage, expected_total",
+        [
+            ({"prompt_tokens": 15.0, "completion_tokens": 3.0}, 18),
+            ({"input_tokens": 15, "output_tokens": 3}, 18),
+            ({"prompt_tokens": 15, "completion_tokens": 3, "total_tokens": None}, 18),
+            ({"prompt_tokens": 16, "completion_tokens": 3, "total_tokens": 300}, 300),
+            ({"prompt_tokens": 16, "completion_tokens": 3, "total_tokens": 0}, 0),
+        ],
+        ids=["prompt-completion", "input-output", "null-total", "total-includes-thinking", "reported-zero"],
+    )
+    def test_fills_missing_totals_without_replacing_reported_totals(self, usage, expected_total):
+        state = State(
+            schema={"token_usage": {"type": dict, "handler": replace_values}},
+            data={"token_usage": {"total_tokens": 10}},
+        )
+        message = ChatMessage.from_assistant("reply", meta={"usage": usage})
+
+        _record_llm_usage(state=state, llm_messages=[message])
+
+        assert state.data["token_usage"] == {**usage, "total_tokens": expected_total + 10}
+        assert message.meta["usage"] == usage
+
+    def test_does_not_mutate_reply_usage_or_nested_details(self):
+        usage = {"prompt_tokens": 10, "completion_tokens": 5, "completion_tokens_details": {"reasoning_tokens": 2}}
+        state = State(schema={"token_usage": {"type": dict, "handler": replace_values}})
+        message = ChatMessage.from_assistant("reply", meta={"usage": usage})
+
+        _record_llm_usage(state=state, llm_messages=[message])
+        _record_llm_usage(state=state, llm_messages=[message])
+
+        assert state.data["token_usage"] == {
+            "prompt_tokens": 20,
+            "completion_tokens": 10,
+            "completion_tokens_details": {"reasoning_tokens": 4},
+            "total_tokens": 30,
+        }
+        assert message.meta["usage"] == {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "completion_tokens_details": {"reasoning_tokens": 2},
+        }
+
+    @pytest.mark.parametrize("meta", [{}, {"usage": None}, {"usage": {}}])
+    def test_keeps_the_default_when_usage_is_unreported(self, meta):
+        state = State(schema={"token_usage": {"type": dict, "handler": replace_values}}, data={"token_usage": {}})
+
+        _record_llm_usage(state=state, llm_messages=[ChatMessage.from_assistant("reply", meta=meta)])
+
+        assert state.data["token_usage"] == {}
 
 
 class TestSelectToolsByName:

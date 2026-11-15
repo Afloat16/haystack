@@ -916,7 +916,8 @@ class Agent:
               execution of every tool call the model requested in that call (if any). The counter is incremented
               after each step completes, including the final step that hits an exit condition or `max_agent_steps`.
             - "token_usage": Aggregated token usage from every LLM call in the run, summed from each LLM message's
-              `meta["usage"]`.
+              `meta["usage"]`. When a reply omits `total_tokens`, its input and output token counts are summed
+              before accumulating the total. Reported totals take precedence, and reply metadata is left unchanged.
             - "tool_call_counts": Mapping of tool name to the number of times that tool was invoked.
             - "exit_reason": Why the Agent stopped, useful for routing the output downstream (e.g. with a
               `ConditionalRouter`). One of: `"text"` (the model returned a complete reply with no tool calls),
@@ -1012,7 +1013,8 @@ class Agent:
               execution of every tool call the model requested in that call (if any). The counter is incremented
               after each step completes, including the final step that hits an exit condition or `max_agent_steps`.
             - "token_usage": Aggregated token usage from every LLM call in the run, summed from each LLM message's
-              `meta["usage"]`.
+              `meta["usage"]`. When a reply omits `total_tokens`, its input and output token counts are summed
+              before accumulating the total. Reported totals take precedence, and reply metadata is left unchanged.
             - "tool_call_counts": Mapping of tool name to the number of times that tool was invoked.
             - "exit_reason": Why the Agent stopped, useful for routing the output downstream (e.g. with a
               `ConditionalRouter`). One of: `"text"` (the model returned a complete reply with no tool calls),

@@ -36,6 +36,8 @@ When usage reaches or exceeds the threshold, the hook sets `stop_run`. The Agent
 
 The budget applies to the `token_usage` accumulated from the Agent's chat generator replies. Calls made by tools or other hooks are not counted. For example, if a tool makes its own LLM call, the tokens used by that call do not count toward the Agent's budget.
 
+The Agent accumulates a total for each reply, using the provider's `total_tokens` when available and otherwise summing its input and output counts. The budget therefore includes replies from different providers in a `FallbackChatGenerator`, even if only some providers report a total. Calls with no reported usage cannot be counted.
+
 Because the hook checks usage before each LLM call, the call that takes the total past the threshold has already completed. The final usage can therefore exceed `max_total_tokens` by the cost of one LLM call.
 
 ## Usage

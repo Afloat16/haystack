@@ -1,0 +1,8 @@
+---
+fixes:
+  - |
+    Fixed ``Agent`` undercounting cumulative token usage when a fallback generator switches between providers
+    that report different usage fields. Replies without ``total_tokens`` now contribute their input and output
+    counts to the total, so ``TokenBudgetHook`` stops before the next LLM call once the budget is spent.
+    Provider-reported totals, including additional tokens such as thinking tokens, and the original
+    ``ChatMessage`` metadata are preserved.

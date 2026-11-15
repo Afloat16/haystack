@@ -10,7 +10,7 @@ import pytest
 
 from haystack.components.agents import Agent
 from haystack.components.agents.state import State
-from haystack.components.generators.chat import MockChatGenerator
+from haystack.components.generators.chat import FallbackChatGenerator, MockChatGenerator
 from haystack.core.serialization import default_from_dict, default_to_dict
 from haystack.dataclasses import ChatMessage, ChatRole, ToolCall
 from haystack.hooks.budget import StepBudgetReminderHook, TokenBudgetHook
@@ -97,6 +97,62 @@ class TestTokenBudgetHook:
         assert agent.chat_generator.run.call_count == 2
         assert result["tool_call_counts"]["fetch"] == 2
         assert result["exit_reason"] == "token_budget_exceeded"
+
+    @pytest.mark.parametrize("run_async", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize(
+        "usages",
+        [
+            (
+                {"prompt_tokens": 80, "completion_tokens": 20, "total_tokens": 100},
+                {"prompt_tokens": 80, "completion_tokens": 20},
+            ),
+            (
+                {"prompt_tokens": 80, "completion_tokens": 20},
+                {"prompt_tokens": 80, "completion_tokens": 20, "total_tokens": 100},
+            ),
+            ({"input_tokens": 80, "output_tokens": 20}, {"prompt_tokens": 80, "completion_tokens": 20}),
+        ],
+        ids=["total-first", "total-second", "different-input-output-keys"],
+    )
+    async def test_stops_after_fallback_with_different_usage_schemas(self, run_async, usages):
+        calls = {"primary": 0, "fallback": 0}
+
+        def primary_response(messages):
+            calls["primary"] += 1
+            if calls["primary"] == 2:
+                raise RuntimeError("Primary provider unavailable")
+            if calls["primary"] > 2:
+                return ChatMessage.from_assistant("done", meta={"usage": {}})
+            return ChatMessage.from_assistant(
+                tool_calls=[ToolCall("fetch", {"topic": "first"})], meta={"usage": usages[0]}
+            )
+
+        def fallback_response(messages):
+            calls["fallback"] += 1
+            return ChatMessage.from_assistant(
+                tool_calls=[ToolCall("fetch", {"topic": "second"})], meta={"usage": usages[1]}
+            )
+
+        agent = Agent(
+            chat_generator=FallbackChatGenerator(
+                chat_generators=[
+                    MockChatGenerator(response_fn=primary_response),
+                    MockChatGenerator(response_fn=fallback_response),
+                ]
+            ),
+            tools=[fetch],
+            hooks={"before_llm": [TokenBudgetHook(max_total_tokens=150)]},
+        )
+        messages = [ChatMessage.from_user("Fetch both documents")]
+        result = await agent.run_async(messages=messages) if run_async else agent.run(messages=messages)
+
+        assert result["exit_reason"] == "token_budget_exceeded"
+        assert result["token_usage"]["total_tokens"] == 200
+        assert result["step_count"] == 2
+        assert result["tool_call_counts"] == {"fetch": 2}
+        assert calls == {"primary": 2, "fallback": 1}
+        replies = [message for message in result["messages"] if message.is_from(ChatRole.ASSISTANT)]
+        assert [message.meta["usage"] for message in replies] == list(usages)
 
     def test_stops_a_text_only_loop_kept_alive_by_continue_run(self):
         class KeepIterating:
