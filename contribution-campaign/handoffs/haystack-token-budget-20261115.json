@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-11-15 02:04:45 UTC",
+  "repository": "deepset-ai/haystack",
+  "author": "Afloat16",
+  "status": "commit_and_validation_complete_pr_creation_blocked",
+  "title": "fix: count all provider replies toward Agent token budgets",
+  "body": "### Related Issues\n\nNo existing issue. Reproduced on main at `4b4346b6d798338d9b43e70115006494012b1756`.\n\n### Proposed Changes:\n\nAn Agent using `FallbackChatGenerator` can receive usage dictionaries from different providers in successive steps. If one reply reports `total_tokens` and another reports only input/output counts, the accumulated total contains only the first reply. For example, two 100-token replies leave `total_tokens` at 100, so a budget of 150 incorrectly allows a third LLM call. Switching between input/output key conventions without explicit totals has the same problem.\n\n- Derive a missing total from each reply's input/output counts before accumulating usage.\n- Preserve provider-reported numeric totals, including zero and totals containing thinking tokens.\n- Leave the original reply metadata and nested usage details unchanged.\n- Document the derived total and add a release note.\n\n### How did you test it?\n\n[Fork validation run](https://github.com/Afloat16/haystack/actions/runs/43665680621):\n- Restored the base implementation while keeping the new tests: all six sync/async fallback regressions fail because the Agent incorrectly exits with `text`.\n- Restored the fix and ran the complete budget-hook, Agent utility, Agent, and fallback-generator unit test modules: 238 passed; 4 integration tests deselected.\n- Scoped `hatch run fmt-check`, `hatch run test:types`, release-note generation with Reno, and the repository's pre-commit checks: all passed.\n\nThe regressions use the real `Agent`, `FallbackChatGenerator`, tool execution, and `MockChatGenerator` response functions. They cover both orders of replies with/without totals and a switch between input/output key conventions. No external model API is called.\n\n### Notes for the reviewer\n\nThe implementation and regression tests were generated with an AI assistant.\n\n### Checklist\n\n- I have read the [contributors guidelines](https://github.com/deepset-ai/haystack/blob/main/CONTRIBUTING.md) and the [code of conduct](https://github.com/deepset-ai/haystack/blob/main/code_of_conduct.txt).\n- Related issue update: not applicable; no existing issue.\n- I have added unit tests and updated the docstrings.\n- I have used a conventional `fix:` title.\n- I have documented the behavior and added a release note.\n- I have run the repository's pre-commit hooks in the linked fork CI.\n",
+  "prefilled_url": "https://github.com/deepset-ai/haystack/compare/main...Afloat16:fix/agent-mixed-provider-token-budget-20261115?expand=1&title=fix%3A%20count%20all%20provider%20replies%20toward%20Agent%20token%20budgets&body=%23%23%23%20Related%20Issues%0A%0ANo%20existing%20issue.%20Reproduced%20on%20main%20at%20%604b4346b6d798338d9b43e70115006494012b1756%60.%0A%0A%23%23%23%20Proposed%20Changes%3A%0A%0AAn%20Agent%20using%20%60FallbackChatGenerator%60%20can%20receive%20usage%20dictionaries%20from%20different%20providers%20in%20successive%20steps.%20If%20one%20reply%20reports%20%60total_tokens%60%20and%20another%20reports%20only%20input%2Foutput%20counts%2C%20the%20accumulated%20total%20contains%20only%20the%20first%20reply.%20For%20example%2C%20two%20100-token%20replies%20leave%20%60total_tokens%60%20at%20100%2C%20so%20a%20budget%20of%20150%20incorrectly%20allows%20a%20third%20LLM%20call.%20Switching%20between%20input%2Foutput%20key%20conventions%20without%20explicit%20totals%20has%20the%20same%20problem.%0A%0A-%20Derive%20a%20missing%20total%20from%20each%20reply's%20input%2Foutput%20counts%20before%20accumulating%20usage.%0A-%20Preserve%20provider-reported%20numeric%20totals%2C%20including%20zero%20and%20totals%20containing%20thinking%20tokens.%0A-%20Leave%20the%20original%20reply%20metadata%20and%20nested%20usage%20details%20unchanged.%0A-%20Document%20the%20derived%20total%20and%20add%20a%20release%20note.%0A%0A%23%23%23%20How%20did%20you%20test%20it%3F%0A%0A%5BFork%20validation%20run%5D(https%3A%2F%2Fgithub.com%2FAfloat16%2Fhaystack%2Factions%2Fruns%2F43665680621)%3A%0A-%20Restored%20the%20base%20implementation%20while%20keeping%20the%20new%20tests%3A%20all%20six%20sync%2Fasync%20fallback%20regressions%20fail%20because%20the%20Agent%20incorrectly%20exits%20with%20%60text%60.%0A-%20Restored%20the%20fix%20and%20ran%20the%20complete%20budget-hook%2C%20Agent%20utility%2C%20Agent%2C%20and%20fallback-generator%20unit%20test%20modules%3A%20238%20passed%3B%204%20integration%20tests%20deselected.%0A-%20Scoped%20%60hatch%20run%20fmt-check%60%2C%20%60hatch%20run%20test%3Atypes%60%2C%20release-note%20generation%20with%20Reno%2C%20and%20the%20repository's%20pre-commit%20checks%3A%20all%20passed.%0A%0AThe%20regressions%20use%20the%20real%20%60Agent%60%2C%20%60FallbackChatGenerator%60%2C%20tool%20execution%2C%20and%20%60MockChatGenerator%60%20response%20functions.%20They%20cover%20both%20orders%20of%20replies%20with%2Fwithout%20totals%20and%20a%20switch%20between%20input%2Foutput%20key%20conventions.%20No%20external%20model%20API%20is%20called.%0A%0A%23%23%23%20Notes%20for%20the%20reviewer%0A%0AThe%20implementation%20and%20regression%20tests%20were%20generated%20with%20an%20AI%20assistant.%0A%0A%23%23%23%20Checklist%0A%0A-%20I%20have%20read%20the%20%5Bcontributors%20guidelines%5D(https%3A%2F%2Fgithub.com%2Fdeepset-ai%2Fhaystack%2Fblob%2Fmain%2FCONTRIBUTING.md)%20and%20the%20%5Bcode%20of%20conduct%5D(https%3A%2F%2Fgithub.com%2Fdeepset-ai%2Fhaystack%2Fblob%2Fmain%2Fcode_of_conduct.txt).%0A-%20Related%20issue%20update%3A%20not%20applicable%3B%20no%20existing%20issue.%0A-%20I%20have%20added%20unit%20tests%20and%20updated%20the%20docstrings.%0A-%20I%20have%20used%20a%20conventional%20%60fix%3A%60%20title.%0A-%20I%20have%20documented%20the%20behavior%20and%20added%20a%20release%20note.%0A-%20I%20have%20run%20the%20repository's%20pre-commit%20hooks%20in%20the%20linked%20fork%20CI.%0A",
+  "base": {
+    "repository": "deepset-ai/haystack",
+    "branch": "main",
+    "sha": "4b4346b6d798338d9b43e70115006494012b1756",
+    "tree": "2c2f4cf2359bdbc7d0432b69d709df24e097d3a7"
+  },
+  "head": {
+    "repository": "Afloat16/haystack",
+    "branch": "fix/agent-mixed-provider-token-budget-20261115",
+    "sha": "7ceb9d432a54b39e70d062df9de7f85fc55e88f5",
+    "tree": "9a49fb62c443f705c95a4b9c3e74ed2f0f6a4d8e",
+    "changed_files": [
+      "haystack/components/agents/utils.py",
+      "haystack/components/agents/agent.py",
+      "test/hooks/budget/test_hooks.py",
+      "test/components/agents/test_utils.py",
+      "docs-website/docs/pipeline-components/agents-1/agent.mdx",
+      "docs-website/docs/pipeline-components/agents-1/token-budget.mdx",
+      "releasenotes/notes/agent-mixed-provider-token-budget-f2a91b0ec7d64413.yaml"
+    ]
+  },
+  "validation": {
+    "branch": "validation/agent-token-budget-20261115",
+    "sha": "c1227e82e1456fec07552f4fe7d21c538038a86f",
+    "run_id": 43665680621,
+    "job_id": 132664390219,
+    "url": "https://github.com/Afloat16/haystack/actions/runs/43665680621",
+    "conclusion": "success",
+    "baseline": {
+      "expected_failures": 6,
+      "actual_failures": 6,
+      "error": "Agent returns exit_reason=text instead of token_budget_exceeded",
+      "cases": "sync/async in both explicit/missing total orders, plus mixed input/output aliases"
+    },
+    "fixed": {
+      "passed": 238,
+      "integration_tests_deselected": 4,
+      "modules": [
+        "test/hooks/budget/test_hooks.py",
+        "test/components/agents/test_utils.py",
+        "test/components/agents/test_agent.py",
+        "test/components/generators/chat/test_fallback.py"
+      ]
+    },
+    "checks": {
+      "ruff": "passed",
+      "mypy": "passed, 4 files",
+      "reno": "passed",
+      "pre_commit": "passed",
+      "git_diff_after_validation": "clean"
+    },
+    "workflow_in_upstream_pr": false
+  },
+  "dedup": {
+    "account_history": [
+      {
+        "number": 13076,
+        "status": "merged",
+        "topic": "preserve pipeline snapshot counters across resume"
+      },
+      {
+        "number": 13498,
+        "status": "closed_unmerged",
+        "topic": "RRF duplicate source votes"
+      }
+    ],
+    "upstream_open_prs_checked": 65,
+    "upstream_open_issues_checked": 98,
+    "fork_branches_checked": 125,
+    "related_fork_source_branches_checked": 10,
+    "related_historical_pr": 13435,
+    "related_historical_pr_distinction": "Only preserves usage fields reported as null; does not fill missing per-reply totals",
+    "queries": [
+      "repo:deepset-ai/haystack is:pr TokenBudgetHook",
+      "repo:deepset-ai/haystack is:pr token_usage",
+      "repo:deepset-ai/haystack is:pr token budget fallback",
+      "repo:deepset-ai/haystack is:pr usage total_tokens",
+      "repo:deepset-ai/haystack is:pr mixed usage",
+      "repo:deepset-ai/haystack is:issue token budget"
+    ],
+    "duplicate_found": false
+  },
+  "concurrency": {
+    "limit": 1,
+    "open_before_attempt": 0,
+    "source": "https://github.com/deepset-ai/haystack/blob/main/CONTRIBUTING.md#requirements-for-pull-requests",
+    "recheck_before_retry_required": true
+  },
+  "disclosure": {
+    "mandatory": true,
+    "source": "https://github.com/deepset-ai/haystack/blob/main/CONTRIBUTING.md#using-ai-assistants-to-contribute",
+    "text": "The implementation and regression tests were generated with an AI assistant."
+  },
+  "creation_attempts": [
+    {
+      "method": "github_create_pull_request connector",
+      "result": "403 Resource not accessible by integration"
+    },
+    {
+      "method": "browser fallback",
+      "result": "Parent reports CUA Node runtime unavailable; browser could not open"
+    }
+  ],
+  "notes": "No upstream PR was created by the connector. Full prefilled URL is ready for user confirmation. Baseline and fixed regression tests use the real Agent/FallbackChatGenerator and offline MockChatGenerator. Genesis-Embodied-AI excluded."
+}
