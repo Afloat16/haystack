@@ -1,0 +1,84 @@
+name: Validate agent token budget regression
+on:
+  push:
+    branches:
+      - validation/agent-token-budget-20261115
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HAYSTACK_TELEMETRY_ENABLED: "false"
+      UV_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
+      UV_INDEX_STRATEGY: unsafe-best-match
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 3
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12"
+      - name: Install Hatch
+        run: |
+          python -m pip install --upgrade pip
+          pip install hatch==1.16.5 --uploaded-prior-to=P1D
+          hatch --version
+      - name: Check format and lint
+        run: hatch run fmt-check haystack/components/agents/utils.py haystack/components/agents/agent.py test/hooks/budget/test_hooks.py test/components/agents/test_utils.py
+      - name: Generate and verify release note with Reno
+        run: |
+          mv releasenotes/notes/agent-mixed-provider-token-budget-f2a91b0ec7d64413.yaml "$RUNNER_TEMP/agent-token-budget-note.yaml"
+          hatch run release-note --from-template "$RUNNER_TEMP/agent-token-budget-note.yaml" agent-mixed-provider-token-budget
+          for note in releasenotes/notes/agent-mixed-provider-token-budget-*.yaml; do
+            mv "$note" releasenotes/notes/agent-mixed-provider-token-budget-f2a91b0ec7d64413.yaml
+          done
+          git diff --exit-code -- releasenotes/notes/agent-mixed-provider-token-budget-f2a91b0ec7d64413.yaml
+      - name: Prove the six fallback regressions fail on the base implementation
+        shell: bash
+        run: |
+          cp haystack/components/agents/utils.py "$RUNNER_TEMP/fixed-agent-utils.py"
+          git show 4b4346b6d798338d9b43e70115006494012b1756:haystack/components/agents/utils.py > haystack/components/agents/utils.py
+          set +e
+          hatch run test:unit test/hooks/budget/test_hooks.py -k test_stops_after_fallback_with_different_usage_schemas --no-cov -q --junitxml="$RUNNER_TEMP/baseline.xml"
+          test_status=$?
+          set -e
+          cp "$RUNNER_TEMP/fixed-agent-utils.py" haystack/components/agents/utils.py
+          test "$test_status" -eq 1
+          hatch -e test run python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          report = ET.parse(Path(os.environ["RUNNER_TEMP"]) / "baseline.xml")
+          cases = report.findall(".//testcase")
+          assert len(cases) == 6, len(cases)
+          for case in cases:
+              failure = case.find("failure")
+              assert failure is not None, case.attrib
+              assert "token_budget_exceeded" in failure.text, failure.text
+              assert "'text'" in failure.text, failure.text
+          assert not report.findall(".//error")
+          print("BASELINE: all 6 sync/async fallback cases fail because the run exits with text instead of enforcing the token budget.")
+          PY
+      - name: Run related unit suites on the fixed implementation
+        run: |
+          hatch run test:unit test/hooks/budget/test_hooks.py test/components/agents/test_utils.py test/components/agents/test_agent.py test/components/generators/chat/test_fallback.py --no-cov -q --junitxml="$RUNNER_TEMP/fixed.xml"
+      - name: Type check changed Python modules
+        run: hatch run test:types haystack/components/agents/utils.py haystack/components/agents/agent.py test/hooks/budget/test_hooks.py test/components/agents/test_utils.py
+      - name: Run pre-commit checks
+        run: hatch run pre-commit run --files haystack/components/agents/utils.py haystack/components/agents/agent.py test/hooks/budget/test_hooks.py test/components/agents/test_utils.py docs-website/docs/pipeline-components/agents-1/agent.mdx docs-website/docs/pipeline-components/agents-1/token-budget.mdx releasenotes/notes/agent-mixed-provider-token-budget-f2a91b0ec7d64413.yaml
+      - name: Verify tested sources are unchanged
+        run: git diff --exit-code
+      - name: Show any formatting changes
+        if: always()
+        run: git diff -- haystack/components/agents/utils.py haystack/components/agents/agent.py test/hooks/budget/test_hooks.py test/components/agents/test_utils.py docs-website/docs/pipeline-components/agents-1/agent.mdx docs-website/docs/pipeline-components/agents-1/token-budget.mdx releasenotes/notes/agent-mixed-provider-token-budget-f2a91b0ec7d64413.yaml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: agent-token-budget-test-reports
+          path: |
+            ${{ runner.temp }}/baseline.xml
+            ${{ runner.temp }}/fixed.xml
+          if-no-files-found: warn
