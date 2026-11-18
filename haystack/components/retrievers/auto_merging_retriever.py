@@ -10,6 +10,9 @@ from haystack.document_stores.types import DocumentStore
 from haystack.utils.async_utils import _call_with_async_fallback
 from haystack.utils.misc import _deduplicate_documents
 
+# Astra permits at most 100 IDs in an `in` filter.
+_PARENT_FETCH_BATCH_SIZE = 100
+
 
 @component
 class AutoMergingRetriever:
@@ -129,6 +132,24 @@ class AutoMergingRetriever:
         if not all("__block_size" in doc.meta for doc in matched_leaf_documents):
             raise ValueError("The matched leaf documents do not have the required meta field '__block_size'")
 
+    @staticmethod
+    def _validate_parent_documents(parent_ids: list[str], documents: list[Document]) -> dict[str, Document]:
+        documents_by_id: dict[str, list[Document]] = defaultdict(list)
+        for document in documents:
+            documents_by_id[document.id].append(document)
+
+        parents = {}
+        # Document Stores need not return documents in the order of the requested IDs.
+        for parent_id in parent_ids:
+            parent_docs = documents_by_id[parent_id]
+            if len(parent_docs) != 1:
+                raise ValueError(f"Expected 1 parent document with id {parent_id}, found {len(parent_docs)}")
+            parent_doc = parent_docs[0]
+            if not parent_doc.meta.get("__children_ids"):
+                raise ValueError(f"Parent document with id {parent_id} does not have any children.")
+            parents[parent_id] = parent_doc
+        return parents
+
     @component.output_types(documents=list[Document])
     def run(self, documents: list[Document]) -> dict[str, list[Document]]:
         """
@@ -148,16 +169,13 @@ class AutoMergingRetriever:
 
         AutoMergingRetriever._check_valid_documents(documents)
 
-        def _get_parent_doc(parent_id: str) -> Document:
-            parent_docs = self.document_store.filter_documents({"field": "id", "operator": "==", "value": parent_id})
-            if len(parent_docs) != 1:
-                raise ValueError(f"Expected 1 parent document with id {parent_id}, found {len(parent_docs)}")
-
-            parent_doc = parent_docs[0]
-            if not parent_doc.meta.get("__children_ids"):
-                raise ValueError(f"Parent document with id {parent_id} does not have any children.")
-
-            return parent_doc
+        def _get_parent_docs(parent_ids: list[str]) -> dict[str, Document]:
+            parents = {}
+            for start in range(0, len(parent_ids), _PARENT_FETCH_BATCH_SIZE):
+                batch = parent_ids[start : start + _PARENT_FETCH_BATCH_SIZE]
+                parent_docs = self.document_store.filter_documents({"field": "id", "operator": "in", "value": batch})
+                parents.update(self._validate_parent_documents(batch, parent_docs))
+            return parents
 
         def _try_merge_level(docs_to_merge: list[Document], docs_to_return: list[Document]) -> list[Document]:
             parent_doc_id_to_child_docs: dict[str, list[Document]] = defaultdict(list)  # to group documents by parent
@@ -175,8 +193,9 @@ class AutoMergingRetriever:
 
             # Process each parent group
             merged_docs = []
+            parent_docs = _get_parent_docs(list(parent_doc_id_to_child_docs))
             for parent_doc_id, child_docs in parent_doc_id_to_child_docs.items():
-                parent_doc = _get_parent_doc(parent_doc_id)
+                parent_doc = parent_docs[parent_doc_id]
 
                 # Calculate merge score
                 score = len(child_docs) / len(parent_doc.meta["__children_ids"])
@@ -212,19 +231,16 @@ class AutoMergingRetriever:
 
         AutoMergingRetriever._check_valid_documents(documents)
 
-        async def _get_parent_doc(parent_id: str) -> Document:
-            # The Protocol does not declare the async methods; the helper runs the sync one in a thread.
-            parent_docs = await _call_with_async_fallback(
-                self.document_store, "filter_documents", filters={"field": "id", "operator": "==", "value": parent_id}
-            )
-            if len(parent_docs) != 1:
-                raise ValueError(f"Expected 1 parent document with id {parent_id}, found {len(parent_docs)}")
-
-            parent_doc = parent_docs[0]
-            if not parent_doc.meta.get("__children_ids"):
-                raise ValueError(f"Parent document with id {parent_id} does not have any children.")
-
-            return parent_doc
+        async def _get_parent_docs(parent_ids: list[str]) -> dict[str, Document]:
+            parents = {}
+            for start in range(0, len(parent_ids), _PARENT_FETCH_BATCH_SIZE):
+                batch = parent_ids[start : start + _PARENT_FETCH_BATCH_SIZE]
+                # The Protocol does not declare the async methods; the helper runs the sync one in a thread.
+                parent_docs = await _call_with_async_fallback(
+                    self.document_store, "filter_documents", filters={"field": "id", "operator": "in", "value": batch}
+                )
+                parents.update(self._validate_parent_documents(batch, parent_docs))
+            return parents
 
         async def _try_merge_level(docs_to_merge: list[Document], docs_to_return: list[Document]) -> list[Document]:
             parent_doc_id_to_child_docs: dict[str, list[Document]] = defaultdict(list)  # to group documents by parent
@@ -242,8 +258,9 @@ class AutoMergingRetriever:
 
             # Process each parent group
             merged_docs = []
+            parent_docs = await _get_parent_docs(list(parent_doc_id_to_child_docs))
             for parent_doc_id, child_docs in parent_doc_id_to_child_docs.items():
-                parent_doc = await _get_parent_doc(parent_doc_id)
+                parent_doc = parent_docs[parent_doc_id]
 
                 # Calculate merge score
                 score = len(child_docs) / len(parent_doc.meta["__children_ids"])

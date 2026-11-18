@@ -13,6 +13,117 @@ from haystack.components.retrievers.auto_merging_retriever import AutoMergingRet
 
 
 class TestAutoMergingRetriever:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("groups", [100, 101, 201])
+    async def test_run_bounds_parent_filter_batches(self, in_memory_doc_store, monkeypatch, asynchronous, groups):
+        source = Document(content=" ".join(f"word{index}" for index in range(groups * 8)))
+        hierarchy = HierarchicalDocumentSplitter(block_sizes={8, 2}, split_overlap=0).run([source])["documents"]
+        parents = [doc for doc in hierarchy if doc.meta["__children_ids"]]
+        leaves = [doc for doc in hierarchy if not doc.meta["__children_ids"]]
+        in_memory_doc_store.write_documents(list(reversed(parents)))
+        filter_documents = in_memory_doc_store.filter_documents
+
+        def fetch_parents(filters):
+            # Astra's ID-filter limit must also hold when more parents match than one batch can contain.
+            if filters["operator"] == "in":
+                assert 0 < len(filters["value"]) <= 100
+            return filter_documents(filters)
+
+        lookup = Mock(side_effect=fetch_parents)
+        monkeypatch.setattr(in_memory_doc_store, "filter_documents", lookup)
+        retriever = AutoMergingRetriever(in_memory_doc_store)
+
+        result = await retriever.run_async(leaves) if asynchronous else retriever.run(leaves)
+
+        assert result == {"documents": [hierarchy[0]]}
+        assert lookup.call_count == (groups + 99) // 100 + 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("threshold", [0.5, 0.9])
+    async def test_run_fetches_parents_once_per_level(self, in_memory_doc_store, monkeypatch, asynchronous, threshold):
+        original = Document(content=" ".join(f"word{index}" for index in range(96)))
+        hierarchy = HierarchicalDocumentSplitter(block_sizes={8, 2}, split_overlap=0).run([original])["documents"]
+        parents = [doc for doc in hierarchy if doc.meta["__children_ids"]]
+        leaves = [doc for doc in hierarchy if not doc.meta["__children_ids"]]
+        # Three of each parent's four children match: the two thresholds exercise both branches.
+        matched = [doc for index, doc in enumerate(leaves) if index % 4 != 3]
+        in_memory_doc_store.write_documents(list(reversed(parents)))
+        filter_documents = in_memory_doc_store.filter_documents
+        lookup = Mock(side_effect=lambda filters: list(reversed(filter_documents(filters))))
+        monkeypatch.setattr(in_memory_doc_store, "filter_documents", lookup)
+        retriever = AutoMergingRetriever(in_memory_doc_store, threshold=threshold)
+
+        result = await retriever.run_async(matched) if asynchronous else retriever.run(matched)
+
+        assert len(parents) == 13
+        assert len(leaves) == 48
+        assert result == {"documents": [hierarchy[0]] if threshold == 0.5 else matched}
+        assert lookup.call_count == (2 if threshold == 0.5 else 1)
+        first_lookup = lookup.call_args_list[0]
+        assert (first_lookup.args[0] if first_lookup.args else first_lookup.kwargs["filters"]) == {
+            "field": "id",
+            "operator": "in",
+            "value": list(dict.fromkeys(doc.meta["__parent_id"] for doc in matched)),
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("first_parent", ["missing", "duplicate", "childless", "valid"])
+    async def test_run_validates_batched_parents_in_input_order(
+        self, in_memory_doc_store, monkeypatch, asynchronous, first_parent
+    ):
+        parents = [
+            Document(id=f"parent-{index}", content=f"parent {index}", meta={"__children_ids": [f"leaf-{index}"]})
+            for index in range(2)
+        ]
+        leaves = [
+            Document(
+                id=f"leaf-{index}",
+                content=f"leaf {index}",
+                meta={"__parent_id": parent.id, "__level": 1, "__block_size": 2},
+            )
+            for index, parent in enumerate(parents)
+        ]
+        if first_parent == "childless":
+            parents[0].meta["__children_ids"] = []
+        if first_parent != "missing":
+            in_memory_doc_store.write_documents(parents[:1])
+        filter_documents = in_memory_doc_store.filter_documents
+
+        def fetch_parents(filters):
+            documents = filter_documents(filters)
+            return documents * 2 if first_parent == "duplicate" else documents
+
+        monkeypatch.setattr(in_memory_doc_store, "filter_documents", fetch_parents)
+        retriever = AutoMergingRetriever(in_memory_doc_store)
+        message = (
+            "Parent document with id parent-0 does not have any children."
+            if first_parent == "childless"
+            else (
+                f"Expected 1 parent document with id parent-{int(first_parent == 'valid')}, "
+                f"found {2 if first_parent == 'duplicate' else 0}"
+            )
+        )
+        with pytest.raises(ValueError, match=message):
+            if asynchronous:
+                await retriever.run_async(leaves)
+            else:
+                retriever.run(leaves)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_run_empty_documents_without_parent_lookup(self, in_memory_doc_store, monkeypatch, asynchronous):
+        lookup = Mock(wraps=in_memory_doc_store.filter_documents)
+        monkeypatch.setattr(in_memory_doc_store, "filter_documents", lookup)
+        retriever = AutoMergingRetriever(in_memory_doc_store)
+
+        result = await retriever.run_async([]) if asynchronous else retriever.run([])
+
+        assert result == {"documents": []}
+        lookup.assert_not_called()
+
     def test_init_default(self, in_memory_doc_store):
         retriever = AutoMergingRetriever(in_memory_doc_store)
         assert retriever.threshold == 0.5

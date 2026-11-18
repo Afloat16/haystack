@@ -1,0 +1,7 @@
+---
+enhancements:
+  - |
+    ``AutoMergingRetriever`` now fetches required parent documents in batches
+    of up to 100 IDs per hierarchy level, for both ``run`` and ``run_async``.
+    This reduces repeated lookups when matching leaves have different parents,
+    while preserving merge thresholds, document order, and parent validation.
