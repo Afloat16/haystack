@@ -1,0 +1,5 @@
+fixes:
+  - |
+    ``JsonSchemaValidator`` now checks ordinary JSON responses before converting embedded JSON strings.
+    Fields declared as strings can contain JSON snippets without being incorrectly rejected as objects or arrays.
+    Legacy conversion remains available when the original values do not satisfy the schema.

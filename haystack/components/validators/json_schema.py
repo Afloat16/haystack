@@ -123,6 +123,7 @@ class JsonSchemaValidator:
 
         Schemas declaring an array type validate the complete array, including its item and length constraints.
         Other schemas retain per-item validation for lists, including OpenAI function-call lists.
+        Ordinary JSON content is validated as provided before trying legacy conversion of embedded JSON strings.
 
         :param messages: A list of ChatMessage instances to be validated. The last message in this list is the one
             that is validated.
@@ -160,13 +161,13 @@ class JsonSchemaValidator:
 
         if json_schema is None:
             raise ValueError("Provide a JSON schema for validation either in the run method or in the component init.")
-        # fc payload is json object but subtree `parameters` is string - we need to convert to json object
-        # we need complete json to validate it against schema
-        last_message_json = self._recursive_json_to_object(last_message_content)
         using_openai_schema: bool = self._is_openai_function_calling_schema(json_schema)
         if using_openai_schema:
+            # OpenAI function calls encode their arguments as a JSON string.
+            last_message_json = self._recursive_json_to_object(last_message_content)
             validation_schema = json_schema["parameters"]
         else:
+            last_message_json = last_message_content
             validation_schema = json_schema
         try:
             if using_openai_schema:
@@ -182,7 +183,12 @@ class JsonSchemaValidator:
                     else [last_message_json]
                 )
                 for instance in instances:
-                    validate(instance=instance, schema=validation_schema)
+                    try:
+                        validate(instance=instance, schema=validation_schema)
+                    except ValidationError:
+                        # Keep strings that already satisfy the schema intact, while retaining
+                        # compatibility with responses containing JSON-encoded objects or arrays.
+                        validate(instance=self._recursive_json_to_object(instance), schema=validation_schema)
 
             return {"validated": [last_message]}
         except ValidationError as e:

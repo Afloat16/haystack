@@ -29,6 +29,8 @@ Use this component to ensure that an LLM-generated chat message JSON adheres to 
 
 For top-level JSON arrays, use a schema with `"type": "array"` (or a type list containing `"array"`, such as `"type": ["array", "null"]`). The component validates the complete array, including its `items`, `minItems`, `maxItems`, and `uniqueItems` constraints. With other schemas, JSON lists retain per-item validation. OpenAI function-call lists also retain their existing argument validation.
 
+Ordinary JSON responses are validated with their original values first. A field declared as a string can contain a JSON snippet, such as `"[1, 2, 3]"`, and still pass validation. If the original values fail validation, the component also tries its legacy conversion of embedded JSON strings into objects or arrays.
+
 ## Usage
 
 ### In a pipeline

@@ -2,9 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
 
 import pytest
+from jsonschema import validate
 
 from haystack import Pipeline, component
 from haystack.components.validators import JsonSchemaValidator
@@ -168,6 +170,68 @@ class TestJsonSchemaValidator:
         recovery_text = result["validation_error"][0].text
         assert recovery_text is not None
         assert "'name' is a required property" in recovery_text
+
+    @pytest.mark.parametrize("snippet", ['{"customer": "Alice", "amount": 19}', "[1, 2, 3]", "plain text"])
+    @pytest.mark.parametrize("layout", ["object", "array", "batch", "nested"])
+    def test_validates_json_string_content_without_reinterpreting_it(self, snippet, layout):
+        schema = {"type": "object", "properties": {"snippet": {"type": "string"}}, "required": ["snippet"]}
+        content = {"snippet": snippet}
+        if layout == "array":
+            content = [content]
+            schema = {"type": "array", "items": schema}
+        elif layout == "batch":
+            content = [content, {"snippet": "another snippet"}]
+        elif layout == "nested":
+            content = {"record": content}
+            schema = {"type": "object", "properties": {"record": schema}, "required": ["record"]}
+        # The original JSON already satisfies the supplied schema. The batch layout retains
+        # Haystack's existing convention of checking each item against a non-array schema.
+        for instance in content if layout == "batch" else [content]:
+            validate(instance=instance, schema=schema)
+        text = json.dumps(content)
+        message = ChatMessage.from_assistant(text=text)
+
+        result = JsonSchemaValidator(json_schema=schema).run(messages=[message])
+
+        assert result == {"validated": [message]}
+        assert result["validated"][0].text == text
+
+    @pytest.mark.parametrize("keyword", ["oneOf", "anyOf"])
+    def test_validates_json_string_content_with_composed_property_schema(self, keyword):
+        schema = {
+            "type": "object",
+            "properties": {"snippet": {keyword: [{"type": "string"}, {"type": "integer"}]}},
+            "required": ["snippet"],
+        }
+        content = {"snippet": '{"status": "ready"}'}
+        validate(instance=content, schema=schema)
+        message = ChatMessage.from_assistant(text=json.dumps(content))
+
+        assert JsonSchemaValidator(json_schema=schema).run(messages=[message]) == {"validated": [message]}
+
+    @pytest.mark.parametrize("snippet", [{"customer": "Alice"}, [1, 2, 3]])
+    def test_rejects_structured_values_when_a_string_is_required(self, snippet):
+        schema = {"type": "object", "properties": {"snippet": {"type": "string"}}, "required": ["snippet"]}
+        message = ChatMessage.from_assistant(text=json.dumps({"snippet": snippet}))
+
+        result = JsonSchemaValidator(json_schema=schema).run(messages=[message])
+
+        assert list(result) == ["validation_error"]
+        recovery_text = result["validation_error"][0].text
+        assert recovery_text is not None
+        assert "is not of type 'string'" in recovery_text
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    def test_pipeline_routes_valid_json_string_content_to_validated(self, asynchronous):
+        schema = {"type": "object", "properties": {"source_json": {"type": "string"}}, "required": ["source_json"]}
+        message = ChatMessage.from_assistant(text=json.dumps({"source_json": '{"customer": "Alice", "amount": 19}'}))
+        pipe = Pipeline()
+        pipe.add_component(name="validator", instance=JsonSchemaValidator(json_schema=schema))
+        data = {"validator": {"messages": [message]}}
+
+        result = asyncio.run(pipe.run_async(data=data)) if asynchronous else pipe.run(data=data)
+
+        assert result == {"validator": {"validated": [message]}}
 
     # Validates recursive_json_to_object method
     def test_recursive_json_to_object(self, genuine_fc_message):
