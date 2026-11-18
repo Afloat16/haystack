@@ -1,0 +1,5 @@
+enhancements:
+  - |
+    ``InMemoryDocumentStore`` selects small embedding-retrieval result sets without sorting every candidate.
+    Similarity scores, insertion order for tied scores, filters, and returned document contents remain unchanged.
+    Queries requesting at least a tenth of the candidates and queries with NaN scores retain the existing full-sort behavior.

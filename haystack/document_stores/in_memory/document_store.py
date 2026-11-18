@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from functools import wraps
+from heapq import nlargest
 from pathlib import Path
 from threading import RLock
 from typing import Any, Concatenate, Literal, ParamSpec, TypeVar
@@ -937,11 +938,18 @@ class InMemoryDocumentStore:
 
         resolved_return_embedding = self.return_embedding if return_embedding is None else return_embedding
 
+        scored_documents = zip(documents_with_embeddings, scores, strict=True)
+        # Heap selection helps for small result sets; sorting is faster for larger fractions.
+        # Keep full sorting for NaN scores too, preserving its existing non-total ordering.
+        if top_k * 10 >= len(documents_with_embeddings) or any(math.isnan(score) for score in scores):
+            results = sorted(scored_documents, key=lambda x: x[1], reverse=True)[:top_k]
+        else:
+            # nlargest preserves insertion order for equal scores, like the stable full sort.
+            results = nlargest(top_k, scored_documents, key=lambda x: x[1])
+
         # create Documents with the similarity score for the top k results
         top_documents = []
-        for doc, score in sorted(zip(documents_with_embeddings, scores, strict=True), key=lambda x: x[1], reverse=True)[
-            :top_k
-        ]:
+        for doc, score in results:
             doc_fields = doc.to_dict()
             doc_fields["score"] = score
             if resolved_return_embedding is False:
