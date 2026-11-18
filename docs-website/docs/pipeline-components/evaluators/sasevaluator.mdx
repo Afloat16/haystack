@@ -30,6 +30,8 @@ You can use the `SASEvaluator` component to evaluate answers predicted by a Hays
 
 You can provide a bi-encoder or cross-encoder model to initialize a `SASEvaluator`. By default, `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` model is used. A cross-encoder must have a single output label: `SASEvaluator` raises a `ValueError` during model initialization for cross-encoders with more labels, such as NLI models.
 
+Bi-encoders saved in SentenceTransformers format can also use non-Transformer modules, such as `StaticEmbedding`. These models do not need a Transformers `config.json` file.
+
 Note that only _one_ predicted answer is compared to _one_ ground truth answer at a time. The component does not support multiple ground truth answers for the same question or multiple answers predicted for the same question.
 
 ## Usage

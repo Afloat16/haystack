@@ -66,6 +66,7 @@ class SASEvaluator:
         :param model:
             SentenceTransformers semantic textual similarity model, should be path or string pointing to a downloadable
             model.
+            Bi-Encoders can also use non-Transformer modules, such as static embeddings.
             Cross Encoder models must return exactly one score per pair.
         :param batch_size:
             Number of prediction-label pairs to encode at once. Must be a positive integer.
@@ -121,9 +122,15 @@ class SASEvaluator:
             return
 
         token = self._token.resolve_value() if self._token else None
-        config = AutoConfig.from_pretrained(self._model, token=token)
+        try:
+            config = AutoConfig.from_pretrained(self._model, token=token)
+        except (OSError, ValueError):
+            # Static embeddings and other non-Transformer modules need no Transformers config.
+            if not util.is_sentence_transformer_model(self._model, token=token):
+                raise
+            config = None
         cross_encoder_used = False
-        if config.architectures:
+        if config is not None and config.architectures:
             cross_encoder_used = any(arch.endswith("ForSequenceClassification") for arch in config.architectures)
         device = ComponentDevice.resolve_device(self._device).to_torch_str()
         # Based on the Model string we can load either Bi-Encoders or Cross Encoders.

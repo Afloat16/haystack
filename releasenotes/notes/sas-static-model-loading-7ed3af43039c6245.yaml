@@ -1,0 +1,7 @@
+---
+fixes:
+  - |
+    ``SASEvaluator`` now loads SentenceTransformers bi-encoders that use static embeddings
+    or other non-Transformer modules without requiring a Transformers configuration file.
+    This fixes model initialization failures for these models in standalone evaluations
+    and evaluation pipelines.

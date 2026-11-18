@@ -7,15 +7,135 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-from sentence_transformers import CrossEncoder
+import torch
+from sentence_transformers import CrossEncoder, SentenceTransformer
+from sentence_transformers.models import BoW, Pooling, StaticEmbedding, Transformer
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
 from torch.nn import Identity, Sigmoid
+from transformers import BertConfig, BertForSequenceClassification, BertModel, PreTrainedTokenizerFast
 
+from haystack import Pipeline
 from haystack.components.evaluators.sas_evaluator import SASEvaluator
 from haystack.utils import expit
 from haystack.utils.device import ComponentDevice
 
 
 class TestSASEvaluator:
+    @pytest.fixture(params=["static", "bow"])
+    def static_sentence_transformer(self, tmp_path, request):
+        module: StaticEmbedding | BoW
+        if request.param == "static":
+            tokenizer = Tokenizer(WordLevel({"[UNK]": 0, "cat": 1, "dog": 2, "vehicle": 3}, unk_token="[UNK]"))
+            tokenizer.pre_tokenizer = Whitespace()
+            module = StaticEmbedding(
+                tokenizer=tokenizer, embedding_weights=torch.tensor([[0.0, 0.0], [1.0, 0.0], [0.6, 0.8], [0.0, 1.0]])
+            )
+            expected_embeddings = [[1.0, 0.0], [0.8, 0.4], [0.0, 1.0]]
+            expected_scores = [1.0, 2 / np.sqrt(5), 0.0]
+        else:
+            module = BoW(vocab=["cat", "dog", "vehicle"])
+            expected_embeddings = [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            expected_scores = [1.0, 1 / np.sqrt(2), 0.0]
+        path = tmp_path / "similarity_model"
+        SentenceTransformer(modules=[module], device="cpu").save_pretrained(str(path), create_model_card=False)
+        assert (path / "modules.json").exists()
+        assert not (path / "config.json").exists()
+        loaded = SentenceTransformer(str(path), device="cpu")
+        np.testing.assert_allclose(loaded.encode(["cat", "cat dog", "vehicle"]), expected_embeddings, atol=1e-7)
+        return str(path), expected_scores
+
+    def test_run_with_static_sentence_transformer(self, static_sentence_transformer, del_hf_env_vars):
+        path, expected_scores = static_sentence_transformer
+        evaluator = SASEvaluator.from_dict(SASEvaluator(model=path, device=ComponentDevice.from_str("cpu")).to_dict())
+        result = evaluator.run(ground_truth_answers=["cat"] * 3, predicted_answers=["cat", "cat dog", "vehicle"])
+
+        assert result["individual_scores"] == pytest.approx(expected_scores)
+        assert result["score"] == pytest.approx(sum(expected_scores) / 3)
+        loaded = evaluator._similarity_model
+        assert isinstance(loaded, SentenceTransformer)
+        evaluator.warm_up()
+        assert evaluator._similarity_model is loaded
+
+    @pytest.mark.parametrize("run_async", [False, True])
+    @pytest.mark.asyncio
+    async def test_pipeline_with_static_sentence_transformer(
+        self, static_sentence_transformer, run_async, del_hf_env_vars
+    ):
+        path, expected_scores = static_sentence_transformer
+        pipeline = Pipeline()
+        pipeline.add_component("sas", SASEvaluator(model=path, device=ComponentDevice.from_str("cpu")))
+        data = {"sas": {"ground_truth_answers": ["cat"] * 3, "predicted_answers": ["cat", "cat dog", "vehicle"]}}
+        result = await pipeline.run_async(data) if run_async else pipeline.run(data)
+
+        assert result["sas"]["individual_scores"] == pytest.approx(expected_scores)
+        assert result["sas"]["score"] == pytest.approx(sum(expected_scores) / 3)
+
+    @pytest.mark.parametrize("config_error", [OSError("missing configuration"), ValueError("unrecognized model")])
+    def test_warm_up_static_model_passes_token(self, config_error, monkeypatch):
+        monkeypatch.setenv("HF_API_TOKEN", "fake-token")
+        with (
+            patch("haystack.components.evaluators.sas_evaluator.AutoConfig.from_pretrained", side_effect=config_error),
+            patch(
+                "haystack.components.evaluators.sas_evaluator.util.is_sentence_transformer_model", return_value=True
+            ) as probe,
+            patch("haystack.components.evaluators.sas_evaluator.SentenceTransformer") as model,
+        ):
+            SASEvaluator(model="private/static-model", device=ComponentDevice.from_str("cpu")).warm_up()
+
+        probe.assert_called_once_with("private/static-model", token="fake-token")
+        model.assert_called_once_with("private/static-model", device="cpu", token="fake-token")
+
+    @pytest.mark.parametrize("config_error", [OSError("missing configuration"), ValueError("unrecognized model")])
+    def test_warm_up_preserves_configuration_error_for_other_models(self, config_error):
+        with (
+            patch("haystack.components.evaluators.sas_evaluator.AutoConfig.from_pretrained", side_effect=config_error),
+            patch(
+                "haystack.components.evaluators.sas_evaluator.util.is_sentence_transformer_model", return_value=False
+            ),
+            patch("haystack.components.evaluators.sas_evaluator.SentenceTransformer") as model,
+            pytest.raises(type(config_error), match=re.escape(str(config_error))) as exc_info,
+        ):
+            SASEvaluator(model="missing/model").warm_up()
+
+        assert exc_info.value is config_error
+        model.assert_not_called()
+
+    @pytest.mark.parametrize("cross_encoder", [False, True])
+    def test_warm_up_keeps_transformer_model_type(self, tmp_path, cross_encoder, del_hf_env_vars):
+        base_path = tmp_path / "backbone"
+        tokenizer = Tokenizer(WordLevel({"[UNK]": 0, "[PAD]": 1, "cat": 2}, unk_token="[UNK]"))
+        tokenizer.pre_tokenizer = Whitespace()
+        tokenizer_fast = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="[UNK]", pad_token="[PAD]")
+        tokenizer_fast.save_pretrained(base_path)
+        config = BertConfig(
+            vocab_size=3, hidden_size=8, num_hidden_layers=1, num_attention_heads=2, intermediate_size=16, num_labels=1
+        )
+        model: CrossEncoder | SentenceTransformer
+        if cross_encoder:
+            backbone = BertForSequenceClassification(config)
+            with torch.no_grad():
+                for parameter in backbone.parameters():
+                    parameter.zero_()
+                backbone.classifier.bias.fill_(0.75)
+            backbone.save_pretrained(base_path)
+            model = CrossEncoder(str(base_path), device="cpu")
+            expected = expit(0.75)
+        else:
+            BertModel(config).save_pretrained(base_path)
+            model = SentenceTransformer(modules=[Transformer(str(base_path)), Pooling(8)], device="cpu")
+            expected = 1.0
+        model_path = tmp_path / "similarity_model"
+        model.save_pretrained(str(model_path), create_model_card=False)
+        evaluator = SASEvaluator(model=str(model_path), device=ComponentDevice.from_str("cpu"))
+
+        result = evaluator.run(ground_truth_answers=["cat"], predicted_answers=["cat"])
+
+        assert isinstance(evaluator._similarity_model, CrossEncoder if cross_encoder else SentenceTransformer)
+        assert result["individual_scores"] == pytest.approx([expected])
+        assert result["score"] == pytest.approx(expected)
+
     def test_init_default(self, monkeypatch):
         monkeypatch.setenv("HF_API_TOKEN", "fake-token")
         evaluator = SASEvaluator()
