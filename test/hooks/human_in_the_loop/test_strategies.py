@@ -98,14 +98,15 @@ class TestBlockingConfirmationStrategy:
         assert isinstance(strategy.confirmation_policy, AskOncePolicy)
         assert isinstance(strategy.confirmation_ui, SimpleConsoleUI)
 
-    def test_run_confirm(self, monkeypatch):
+    @pytest.mark.parametrize("action", ["confirm", "modify"])
+    def test_run_without_new_tool_params(self, monkeypatch, action):
         strategy = BlockingConfirmationStrategy(
             confirmation_policy=AlwaysAskPolicy(), confirmation_ui=SimpleConsoleUI()
         )
 
-        # Mock the UI to always confirm
+        # No replacement arguments were supplied by the UI.
         def mock_get_user_confirmation(tool_name, tool_description, tool_params):
-            return ConfirmationUIResult(action="confirm")
+            return ConfirmationUIResult(action=action)
 
         monkeypatch.setattr(strategy.confirmation_ui, "get_user_confirmation", mock_get_user_confirmation)
 
@@ -113,24 +114,26 @@ class TestBlockingConfirmationStrategy:
         assert decision.tool_name == "test_tool"
         assert decision.execute is True
         assert decision.final_tool_params == {"param1": "value1"}
+        assert decision.feedback is None
 
-    def test_run_modify(self, monkeypatch):
+    @pytest.mark.parametrize("new_tool_params", [{}, {"param1": "new_value"}])
+    def test_run_modify(self, monkeypatch, new_tool_params):
         strategy = BlockingConfirmationStrategy(
             confirmation_policy=AlwaysAskPolicy(), confirmation_ui=SimpleConsoleUI()
         )
 
         # Mock the UI to always modify
         def mock_get_user_confirmation(tool_name, tool_description, tool_params):
-            return ConfirmationUIResult(action="modify", new_tool_params={"param1": "new_value"})
+            return ConfirmationUIResult(action="modify", new_tool_params=new_tool_params)
 
         monkeypatch.setattr(strategy.confirmation_ui, "get_user_confirmation", mock_get_user_confirmation)
 
         decision = strategy.run(tool_name="test_tool", tool_description="A test tool", tool_params={"param1": "value1"})
         assert decision.tool_name == "test_tool"
         assert decision.execute is True
-        assert decision.final_tool_params == {"param1": "new_value"}
+        assert decision.final_tool_params == new_tool_params
         assert decision.feedback == (
-            "The user changed the arguments of 'test_tool' to {'param1': 'new_value'} and wants that result used. "
+            f"The user changed the arguments of 'test_tool' to {new_tool_params} and wants that result used. "
             "Don't call it again with the original arguments."
         )
 

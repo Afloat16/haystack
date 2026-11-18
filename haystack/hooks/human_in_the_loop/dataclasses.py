@@ -19,7 +19,8 @@ class ConfirmationUIResult:
         they might provide a reason for the rejection.
     :param new_tool_params:
         Optional set of new parameters for the tool. For example, if the user chooses to modify the tool parameters,
-        they can provide a new set of parameters here.
+        they can provide a new set of parameters here. An empty dictionary removes the original arguments,
+        allowing the tool's parameter defaults to apply.
     """
 
     action: str  # "confirm", "reject", "modify"

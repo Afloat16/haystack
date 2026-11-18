@@ -121,7 +121,7 @@ class BlockingConfirmationStrategy:
             return ToolExecutionDecision(
                 tool_name=tool_name, execute=False, tool_call_id=tool_call_id, feedback=explanation_text
             )
-        if confirmation_ui_result.action == "modify" and confirmation_ui_result.new_tool_params:
+        if confirmation_ui_result.action == "modify" and confirmation_ui_result.new_tool_params is not None:
             # Update the tool call params with the new params
             final_args.update(confirmation_ui_result.new_tool_params)
             explanation_text = self.modify_template.format(tool_name=tool_name, final_tool_params=final_args)

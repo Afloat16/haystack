@@ -2,15 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import os
 from typing import Annotated, Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from haystack import Document
 from haystack.components.agents import Agent
 from haystack.components.generators.chat import MockChatGenerator, OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage, ToolCall
+from haystack.document_stores.in_memory import InMemoryDocumentStore
 from haystack.hooks import Hook, HookPoint
 from haystack.hooks.human_in_the_loop import (
     AlwaysAskPolicy,
@@ -62,6 +65,56 @@ def confirmation_hook(confirmation_strategies: dict[str | tuple[str, ...], Confi
 
 
 class TestAgent:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("async_mode", [False, True])
+    @pytest.mark.parametrize("new_tool_params", [{}, {"status": "approved"}])
+    async def test_modified_tool_arguments_use_document_lookup_defaults(self, async_mode, new_tool_params):
+        document_store = InMemoryDocumentStore()
+        document_store.write_documents(
+            [
+                Document(content="Approved purchase manual", meta={"status": "approved"}),
+                Document(content="Draft purchase manual", meta={"status": "draft"}),
+            ]
+        )
+
+        def lookup_documents(status: str = "approved") -> list[str]:
+            """Find documents with the selected publication status."""
+            documents = document_store.filter_documents(
+                filters={"field": "meta.status", "operator": "==", "value": status}
+            )
+            return [document.content for document in documents]
+
+        original_arguments = {"status": "draft"}
+        call = ToolCall(tool_name="lookup_documents", arguments=original_arguments, id="lookup")
+        feedback = "Use the approved purchase manual."
+        strategy = BlockingConfirmationStrategy(
+            confirmation_policy=AlwaysAskPolicy(),
+            confirmation_ui=MockUserInterface(
+                ConfirmationUIResult(action="modify", new_tool_params=new_tool_params, feedback=feedback)
+            ),
+        )
+        agent = Agent(
+            chat_generator=MockChatGenerator(responses=[ChatMessage.from_assistant(tool_calls=[call]), "Done"]),
+            tools=[create_tool_from_function(lookup_documents)],
+            hooks={"before_tool": [ConfirmationHook(confirmation_strategies={"lookup_documents": strategy})]},
+            raise_on_tool_invocation_failure=True,
+        )
+        messages = [ChatMessage.from_user("Find the purchase manual.")]
+        try:
+            output = await agent.run_async(messages=messages) if async_mode else agent.run(messages=messages)
+        finally:
+            document_store.shutdown()
+
+        results = [message.tool_call_result for message in output["messages"] if message.tool_call_result is not None]
+        assert len(results) == 1
+        assert results[0].origin.arguments == new_tool_params
+        assert json.loads(results[0].result) == ["Approved purchase manual"]
+        assert results[0].error is False
+        assert original_arguments == {"status": "draft"}
+        assert any(feedback in (message.text or "") for message in output["messages"])
+        assert output["tool_call_counts"] == {"lookup_documents": 1}
+        assert output["exit_reason"] == "text"
+
     def test_confirmation_hook_accepted_on_before_tool(self, tools, confirmation_hook):
         agent = Agent(chat_generator=MockChatGenerator(), tools=tools, hooks={"before_tool": [confirmation_hook]})
         assert agent.hooks["before_tool"] == [confirmation_hook]

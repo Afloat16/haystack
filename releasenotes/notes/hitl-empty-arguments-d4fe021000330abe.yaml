@@ -1,0 +1,7 @@
+---
+fixes:
+  - |
+    ``BlockingConfirmationStrategy`` now honors an explicit empty dictionary in
+    ``ConfirmationUIResult.new_tool_params`` when a user modifies a tool call.
+    The original arguments are removed so the tool can use its parameter defaults,
+    instead of executing the model's original arguments.
