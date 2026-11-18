@@ -1,0 +1,6 @@
+---
+enhancements:
+  - |
+    ``DocumentCleaner`` stops searching later pages for a repeated header or footer
+    once the pages already examined have no common n-gram. This avoids unnecessary
+    text processing in paginated documents without changing the cleaned content.

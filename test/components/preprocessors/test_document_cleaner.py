@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+from functools import reduce
+from itertools import permutations
+from unittest.mock import patch
 
 import pytest
 
@@ -189,6 +192,72 @@ class TestDocumentCleaner:
         # With no genuine repeated header/footer, all three pages must round-trip unchanged and in order.
         assert result.content.split("\f") == ["PAGE ONE", "The quick brown fox jumps high", "PAGE THREE"]
         assert result.content == text
+
+    @pytest.mark.parametrize("common_pages", [0, 1, 3], ids=["short-first-page", "disjoint", "later-disjoint"])
+    def test_repeated_substrings_stops_when_no_common_ngram_remains(self, common_pages):
+        pages = [" ".join(f"page{page}word{word}" for word in range(45)) for page in range(14)]
+        for page in range(1, common_pages + 1):
+            pages[page] = "Shared Page Header " + pages[page] + " Shared Page Footer"
+        if common_pages == 0:
+            pages[1] = "short page"
+        text = "\f".join(pages)
+        document = Document(content=text, id="paginated", meta={"source": "pages"})
+        cleaner = DocumentCleaner(remove_repeated_substrings=True, keep_id=True)
+
+        with patch.object(cleaner, "_allngram", wraps=cleaner._allngram) as ngrams:
+            result = cleaner.run(documents=[document])
+
+        assert result == {"documents": [document]}
+        # Each search needs only the prefix ending at the first empty intersection.
+        assert ngrams.call_count == 2 * (common_pages + 1)
+
+    def test_repeated_substrings_keeps_searching_while_common_ngrams_remain(self):
+        header, footer = "Shared Page Header", "Shared Page Footer"
+        pages = [
+            header + "\n" + " ".join(f"page{page}word{word}" for word in range(60)) + "\n" + footer
+            for page in range(14)
+        ]
+        text = "\f".join(pages)
+        cleaner = DocumentCleaner(
+            remove_empty_lines=False, remove_extra_whitespaces=False, remove_repeated_substrings=True
+        )
+
+        with patch.object(cleaner, "_allngram", wraps=cleaner._allngram) as ngrams:
+            result = cleaner.run(documents=[Document(content=text)])
+
+        assert result["documents"][0].content == text.replace(header, "").replace("\n" + footer, "")
+        assert ngrams.call_count == 2 * (len(pages) - 2)
+
+    @pytest.mark.parametrize(
+        "sequences, expected",
+        [
+            ([], ""),
+            ([""], ""),
+            (["single enough words"], ""),
+            (["", "single enough words", ""], ""),
+            (["a b", "c d"], ""),
+            (["  ", "  "], ""),
+            (["red cat nap", "red cat nap"], "red cat nap"),
+        ],
+    )
+    def test_common_ngram_empty_and_single_sequence_contract(self, sequences, expected):
+        assert DocumentCleaner()._find_longest_common_ngram(sequences) == expected
+
+    @pytest.mark.parametrize(
+        "sequences",
+        list(
+            permutations(
+                ["red cat nap first fox dog hop", "fox dog hop second red cat nap", "red cat nap third fox dog hop"]
+            )
+        ),
+    )
+    def test_common_ngram_preserves_equal_length_tie_selection(self, sequences):
+        cleaner = DocumentCleaner()
+        # Preserve the existing left-to-right set reduction, including its tie selection.
+        common = reduce(set.intersection, (cleaner._allngram(seq, min_ngram=3, max_ngram=4) for seq in sequences))
+        assert common == {"red cat nap", "fox dog hop"}
+        expected = max(common, key=len)
+        assert cleaner._find_longest_common_ngram(list(sequences), min_ngram=3, max_ngram=4) == expected
 
     def test_copy_metadata(self):
         cleaner = DocumentCleaner()

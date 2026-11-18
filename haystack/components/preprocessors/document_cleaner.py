@@ -6,7 +6,7 @@ import re
 from collections.abc import Generator
 from copy import deepcopy
 from dataclasses import replace
-from functools import partial, reduce
+from functools import partial
 from itertools import chain
 from typing import Literal
 from unicodedata import normalize
@@ -363,8 +363,12 @@ class DocumentCleaner:
             # a single sequence has no ngram "in common" with any other; treating
             # its own longest ngram as a repeated header/footer would wipe it
             return ""
-        seqs_ngrams = map(partial(self._allngram, min_ngram=min_ngram, max_ngram=max_ngram), sequences)
-        intersection = reduce(set.intersection, seqs_ngrams)
+        sequence_iterator = iter(sequences)
+        intersection = self._allngram(next(sequence_iterator), min_ngram=min_ngram, max_ngram=max_ngram)
+        for sequence in sequence_iterator:
+            if not intersection:
+                break
+            intersection = intersection.intersection(self._allngram(sequence, min_ngram=min_ngram, max_ngram=max_ngram))
 
         longest = max(intersection, key=len, default="")
         return longest if longest.strip() else ""
