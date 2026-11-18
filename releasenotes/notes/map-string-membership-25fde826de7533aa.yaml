@@ -1,0 +1,7 @@
+---
+enhancements:
+  - |
+    Speed up ``DocumentMAPEvaluator`` when comparing documents by content or ID,
+    especially for large sets of relevant documents. Repeated results still count
+    only once, missing relevant documents still reduce average precision, and
+    metadata comparisons continue to support lists and dictionaries.

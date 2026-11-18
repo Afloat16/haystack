@@ -125,15 +125,19 @@ class DocumentMAPEvaluator:
             average_precision_numerator = 0.0
             retrieved_relevant_documents = 0
 
-            # A list keeps the deduplication working for unhashable comparison values, for example when
-            # document_comparison_field points to a meta key holding a list.
-            uncredited_ground_truth_values: list[Any] = []
+            # Content and IDs are strings, so use fast membership and removal. Keep list
+            # equality for metadata, which may contain unhashable values such as nested lists.
+            uncredited_ground_truth_values: set[str] | list[Any] = (
+                set() if self.document_comparison_field in ("content", "id") else []
+            )
             for doc in ground_truth:
                 value = self._get_comparison_value(doc)
                 # Missing or empty values can't identify a relevant document, so they never match
                 if value in ("", None):
                     continue
-                if value not in uncredited_ground_truth_values:
+                if isinstance(uncredited_ground_truth_values, set):
+                    uncredited_ground_truth_values.add(value)
+                elif value not in uncredited_ground_truth_values:
                     uncredited_ground_truth_values.append(value)
 
             total_relevant_documents = len(uncredited_ground_truth_values)

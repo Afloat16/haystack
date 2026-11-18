@@ -99,6 +99,33 @@ def test_run_with_unhashable_meta_comparison():
     assert result == {"individual_scores": [0.5], "score": 0.5}
 
 
+@pytest.mark.parametrize("comparison_field", ["content", "id", "meta.source"])
+def test_duplicate_truths_and_retrievals_are_credited_once(comparison_field):
+    documents = {
+        value: Document(id=value, content=value, meta={"source": {"tags": [value]}})
+        for value in ("a", "b", "c", "irrelevant")
+    }
+    evaluator = DocumentMAPEvaluator(document_comparison_field=comparison_field)
+    result = evaluator.run(
+        ground_truth_documents=[[documents[value] for value in ("a", "b", "c", "a")]],
+        retrieved_documents=[[documents[value] for value in ("a", "a", "irrelevant", "b")]],
+    )
+
+    # Unique hits are at ranks 1 and 4; the missed "c" still contributes to the denominator.
+    assert result == {"individual_scores": [(1 + 2 / 4) / 3], "score": (1 + 2 / 4) / 3}
+
+
+def test_missing_content_keeps_retrieval_ranks_without_counting_as_relevant():
+    documents = {value: Document(content=value) for value in (None, "", "a", "b")}
+    evaluator = DocumentMAPEvaluator()
+    result = evaluator.run(
+        ground_truth_documents=[[documents[value] for value in (None, "", "a", "b", "a")]],
+        retrieved_documents=[[documents[value] for value in (None, "a", "a", "b")]],
+    )
+
+    assert result == {"individual_scores": [(1 / 2 + 2 / 4) / 2], "score": (1 / 2 + 2 / 4) / 2}
+
+
 def test_run_with_all_matching():
     evaluator = DocumentMAPEvaluator()
     result = evaluator.run(
