@@ -1,0 +1,6 @@
+enhancements:
+  - |
+    ``LostInTheMiddleRanker`` now reorders selected documents in linear time,
+    reducing processing time and temporary allocations for large retrieval
+    results. The returned order, deduplication, ``top_k`` and cumulative
+    ``word_count_threshold`` behavior are unchanged.

@@ -130,6 +130,45 @@ class TestLostInTheMiddleRanker:
         assert result["documents"][0].content == "keep me"
         assert result["documents"][1].content == "unique"
 
+    @pytest.mark.parametrize(
+        ("word_count_threshold", "top_k", "expected_ids"),
+        [
+            (None, None, ["a", "c", "e", "f", "d", "b"]),
+            (2, None, ["a", "b"]),
+            (3, None, ["a", "c", "d", "b"]),
+            (6, None, ["a", "c", "e", "d", "b"]),
+            (100, 3, ["a", "c", "b"]),
+            (100, 1, ["a"]),
+        ],
+    )
+    def test_threshold_prefix_with_empty_content_and_duplicates(self, word_count_threshold, top_k, expected_ids):
+        docs = [
+            Document(id="a", content="", score=0.8),
+            Document(id="b", content="first second", score=0.1),
+            Document(id="c", content=" \t\n", score=0.7),
+            Document(id="d", content="third fourth fifth", score=0.6),
+            Document(id="e", content="sixth", score=0.5),
+            Document(id="f", content="seventh", score=0.4),
+            Document(id="b", content="first second", score=0.9),
+        ]
+        original = [doc.to_dict() for doc in docs]
+        ranker = LostInTheMiddleRanker(word_count_threshold=word_count_threshold, top_k=top_k)
+
+        ranked = ranker.run(documents=docs)["documents"]
+
+        assert [doc.id for doc in ranked] == expected_ids
+        expected_documents = {doc.id: doc for doc in docs}
+        assert all(doc is expected_documents[doc.id] for doc in ranked)
+        assert [doc.to_dict() for doc in docs] == original
+
+    def test_runtime_limits_select_prefix_before_reordering(self):
+        docs = [Document(id=str(i), content="two words") for i in range(6)]
+        ranker = LostInTheMiddleRanker(word_count_threshold=2, top_k=1)
+
+        ranked = ranker.run(documents=docs, word_count_threshold=7, top_k=5)["documents"]
+
+        assert [doc.id for doc in ranked] == ["0", "2", "3", "1"]
+
     @pytest.mark.parametrize("top_k", [1, 2, 3, 4, 5, 6, 7, 8, 12, 20])
     def test_lost_in_the_middle_order_with_top_k(self, top_k: int) -> None:
         # tests that lost_in_the_middle order works with an odd number of documents and a top_k parameter
