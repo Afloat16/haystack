@@ -136,6 +136,8 @@ class MaxSimRanker:
             similarities = query_vectors @ document_vectors.T
             score = float(similarities.max(axis=1).sum())
             scored_documents.append((document, score))
+            # Avoid retaining either matrix while allocating the next document's scoring buffers.
+            del document_vectors, similarities
 
         scored_documents.sort(key=lambda item: item[1], reverse=True)
         return {"documents": [replace(document, score=score) for document, score in scored_documents[:top_k]]}

@@ -1,0 +1,7 @@
+---
+enhancements:
+  - |
+    ``MaxSimRanker`` releases each document's temporary scoring matrices before
+    processing the next document. This reduces peak allocation when ranking
+    multiple documents with large multivector embeddings without changing scores
+    or document order. No configuration changes are required.

@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import weakref
 
+import numpy as np
 import pytest
 
 from haystack import Document
@@ -35,6 +37,45 @@ class TestInitializationSerde:
 
 
 class TestRun:
+    @pytest.mark.parametrize("buffer", ["document_vectors", "similarities"])
+    @pytest.mark.parametrize("document_lengths", [(2,), (2, 2), (2, 4), (4, 2)])
+    def test_run_releases_scoring_buffers_between_documents(self, monkeypatch, buffer, document_lengths):
+        prepare_vectors = MaxSimRanker._prepare_vectors
+        allocations = []
+
+        class TrackedQuery(np.ndarray):
+            def __matmul__(self, other):
+                similarities = np.asarray(self) @ other
+                if buffer == "similarities":
+                    allocations.append(weakref.ref(similarities))
+                return similarities
+
+        def track_vectors(*, multivector_embedding, input_name):
+            if input_name != "query_multivector_embedding":
+                assert all(allocation() is None for allocation in allocations), (
+                    "The previous document's scoring buffer is still alive while preparing the next document."
+                )
+            matrix = prepare_vectors(multivector_embedding=multivector_embedding, input_name=input_name)
+            if input_name == "query_multivector_embedding":
+                return matrix.view(TrackedQuery)
+            if buffer == "document_vectors":
+                allocations.append(weakref.ref(matrix))
+            return matrix
+
+        monkeypatch.setattr(MaxSimRanker, "_prepare_vectors", staticmethod(track_vectors))
+        documents = [
+            Document(id=str(index), multivector_embedding=[[float(index + 1), 0.0]] * length)
+            for index, length in enumerate(document_lengths)
+        ]
+
+        result = MaxSimRanker().run(query_multivector_embedding=[[1.0, 0.0], [0.0, 1.0]], documents=documents)
+
+        assert [(document.id, document.score) for document in result["documents"]] == [
+            (str(index), float(index + 1)) for index in reversed(range(len(documents)))
+        ]
+        assert len(allocations) == len(documents)
+        assert all(allocation() is None for allocation in allocations)
+
     def test_run(self, caplog):
         ranker = MaxSimRanker(top_k=2)
         documents = [
