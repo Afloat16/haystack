@@ -1,0 +1,6 @@
+---
+fixes:
+  - |
+    Preserve nested ``ByteStream`` and ``ImageContent`` payloads when an ``Agent`` tool result exposes
+    them through ``to_dict()``. These payloads could previously become tracing placeholders in the
+    tool message sent to the chat generator, including metadata in a ``GeneratedAnswer``.

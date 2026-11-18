@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import logging
 import os
 import re
@@ -30,7 +31,7 @@ from haystack.components.joiners.list_joiner import ListJoiner
 from haystack.components.retrievers.in_memory import InMemoryBM25Retriever
 from haystack.components.routers.conditional_router import ConditionalRouter
 from haystack.core.component.types import OutputSocket
-from haystack.dataclasses import ChatMessage, ToolCall
+from haystack.dataclasses import ByteStream, ChatMessage, GeneratedAnswer, ToolCall
 from haystack.dataclasses.chat_message import ChatRole, TextContent
 from haystack.dataclasses.streaming_chunk import StreamingChunk
 from haystack.document_stores.in_memory import InMemoryDocumentStore
@@ -732,6 +733,48 @@ class TestGetModelExitReason:
 
 
 class TestAgentRun:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("run_async", [False, True])
+    async def test_nested_tool_result_keeps_receipt_content(self, run_async: bool) -> None:
+        receipt = ByteStream.from_string("Delivery on Tuesday", mime_type="text/plain")
+
+        def download_receipt() -> GeneratedAnswer:
+            return GeneratedAnswer(
+                data="Download complete", query="Get the receipt", documents=[], meta={"receipt": receipt}
+            )
+
+        agent = Agent(
+            chat_generator=MockChatGenerator(
+                responses=[
+                    ChatMessage.from_assistant(tool_calls=[ToolCall(tool_name="download_receipt", arguments={})]),
+                    "Done",
+                ]
+            ),
+            tools=[
+                Tool(
+                    name="download_receipt",
+                    description="Download a receipt",
+                    parameters={"type": "object", "properties": {}},
+                    function=download_receipt,
+                )
+            ],
+        )
+        try:
+            messages = [ChatMessage.from_user("Get the receipt")]
+            result = await agent.run_async(messages=messages) if run_async else agent.run(messages=messages)
+            tool_message = next(message for message in result["messages"] if message.tool_call_results)
+            tool_result = tool_message.tool_call_results[0]
+            assert not tool_result.error
+            assert isinstance(tool_result.result, str)
+            serialized_receipt = json.loads(tool_result.result)["meta"]["receipt"]
+            assert ByteStream.from_dict(serialized_receipt).data == receipt.data
+            assert result["messages"][-1].text == "Done"
+        finally:
+            if run_async:
+                await agent.close_async()
+            else:
+                agent.close()
+
     def test_agent_with_no_tools(self):
         agent = Agent(chat_generator=MockChatGenerator("Berlin"), tools=[], max_agent_steps=3)
 

@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from haystack import Document
+from haystack.dataclasses import ByteStream, GeneratedAnswer, ImageContent
 from haystack.tracing import utils
 from haystack.tracing.utils import _serializable_value
 
@@ -69,6 +70,32 @@ class TestSerializableValue:
         obj = ClassWithBothMethods(b"hello")
         result = _serializable_value(obj, use_placeholders=False)
         assert result == {"data": [104, 101, 108, 108, 111]}
+
+    @pytest.mark.parametrize("use_placeholders", [False, True])
+    @pytest.mark.parametrize("media_type", ["bytes", "image"])
+    def test_nested_to_dict_preserves_placeholder_policy(
+        self, use_placeholders: bool, media_type: str, base64_image_string: str
+    ) -> None:
+        receipt_data = b"receipt"
+        media = (
+            ByteStream(data=receipt_data) if media_type == "bytes" else ImageContent(base64_image=base64_image_string)
+        )
+        answer = GeneratedAnswer(
+            data="Download complete", query="Get the receipt", documents=[], meta={"items": [media]}
+        )
+
+        result = _serializable_value(value=answer, use_placeholders=use_placeholders)
+        serialized_media = result["meta"]["items"][0]
+
+        if media_type == "bytes":
+            if use_placeholders:
+                assert serialized_media["data"] == "Binary data (7 bytes)"
+            else:
+                assert ByteStream.from_dict(serialized_media).data == receipt_data
+        elif use_placeholders:
+            assert base64_image_string not in str(serialized_media)
+        else:
+            assert ImageContent.from_dict(serialized_media).base64_image == base64_image_string
 
     def test_list_of_objects_with_to_dict(self) -> None:
         objs = [ClassWithToDict("a"), ClassWithToDict("b")]

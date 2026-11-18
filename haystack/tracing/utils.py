@@ -64,6 +64,6 @@ def _serializable_value(value: Any, use_placeholders: bool = True) -> Any:
         return _serializable_value(value._to_trace_dict())
 
     if getattr(value, "to_dict", None):
-        return _serializable_value(value.to_dict())
+        return _serializable_value(value=value.to_dict(), use_placeholders=use_placeholders)
 
     return value
